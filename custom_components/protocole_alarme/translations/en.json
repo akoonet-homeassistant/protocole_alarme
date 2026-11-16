@@ -1,0 +1,48 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Protocole Alarme",
+        "description": "Runs actions when you arm or disarm your alarm: close a shutter if a window is open, close the garage, turn on a light, start the presence simulator… Rules are then created in the « Protocole Alarme » panel.",
+        "data": {
+          "alarme": "Alarm to follow"
+        },
+        "data_description": {
+          "alarme": "Rules run when this alarm is armed or disarmed."
+        }
+      }
+    },
+    "abort": {
+      "already_configured": "Protocole Alarme is already set up.",
+      "single_instance_allowed": "Protocole Alarme is already set up."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Protocole Alarme",
+        "description": "**[Open the Protocole Alarme rules](/protocole-alarme)**\n\nRules are managed in this panel. When hidden from the sidebar, it stays reachable through this link, the Protocole Alarme device's \"Visit\" link or at /protocole-alarme.",
+        "data": {
+          "alarme": "Alarm to follow",
+          "barre_laterale": "Show Protocole Alarme in the sidebar"
+        }
+      }
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "echec_verification": { "name": "Check failed" }
+    },
+    "button": {
+      "tester": { "name": "Test {nom}" }
+    },
+    "sensor": {
+      "derniere_execution": { "name": "Last run" },
+      "regles_actives": { "name": "Active rules" }
+    },
+    "switch": {
+      "actif": { "name": "Protocol enabled" },
+      "regle": { "name": "Rule {nom}" }
+    }
+  }
+}

@@ -1,0 +1,48 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Protocole Alarme",
+        "description": "Lance des actions quand vous armez ou désarmez votre alarme : fermer un volet si une fenêtre est ouverte, fermer le garage, allumer une lumière, démarrer le simulateur de présence… Les règles se créent ensuite dans le panneau « Protocole Alarme ».",
+        "data": {
+          "alarme": "Alarme à suivre"
+        },
+        "data_description": {
+          "alarme": "Les règles s'exécutent quand cette alarme est armée ou désarmée."
+        }
+      }
+    },
+    "abort": {
+      "already_configured": "Protocole Alarme est déjà configuré.",
+      "single_instance_allowed": "Protocole Alarme est déjà configuré."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Protocole Alarme",
+        "description": "**[Ouvrir les règles de Protocole Alarme](/protocole-alarme)**\n\nLes règles se gèrent dans ce panneau. Masqué de la barre latérale, il reste accessible par ce lien, par le lien « Ouvrir » de l'appareil Protocole Alarme ou à l'adresse /protocole-alarme.",
+        "data": {
+          "alarme": "Alarme à suivre",
+          "barre_laterale": "Afficher Protocole Alarme dans la barre latérale"
+        }
+      }
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "echec_verification": { "name": "Échec de vérification" }
+    },
+    "button": {
+      "tester": { "name": "Tester {nom}" }
+    },
+    "sensor": {
+      "derniere_execution": { "name": "Dernière exécution" },
+      "regles_actives": { "name": "Règles actives" }
+    },
+    "switch": {
+      "actif": { "name": "Protocole actif" },
+      "regle": { "name": "Règle {nom}" }
+    }
+  }
+}
