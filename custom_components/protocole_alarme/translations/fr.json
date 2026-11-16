@@ -31,18 +31,50 @@
   },
   "entity": {
     "binary_sensor": {
-      "echec_verification": { "name": "Échec de vérification" }
+      "echec_verification": {
+        "name": "Échec de vérification"
+      }
     },
     "button": {
-      "tester": { "name": "Tester {nom}" }
+      "tester": {
+        "name": "Tester {nom}"
+      }
     },
     "sensor": {
-      "derniere_execution": { "name": "Dernière exécution" },
-      "regles_actives": { "name": "Règles actives" }
+      "derniere_execution": {
+        "name": "Dernière exécution"
+      },
+      "regles_actives": {
+        "name": "Règles actives"
+      }
     },
     "switch": {
-      "actif": { "name": "Protocole actif" },
-      "regle": { "name": "Règle {nom}" }
+      "actif": {
+        "name": "Protocole actif"
+      },
+      "regle": {
+        "name": "Règle {nom}"
+      }
+    }
+  },
+  "services": {
+    "exporter_regles": {
+      "name": "Exporter les règles",
+      "description": "Renvoie toutes les règles de Protocole Alarme (sauvegarde, copie). Réservé aux administrateurs."
+    },
+    "importer_regles": {
+      "name": "Importer des règles",
+      "description": "Ajoute des règles (ou remplace toutes les règles). Chaque règle est vérifiée avant l'enregistrement. Réservé aux administrateurs.",
+      "fields": {
+        "regles": {
+          "name": "Règles",
+          "description": "Liste de règles, au format renvoyé par « Exporter les règles »."
+        },
+        "remplacer": {
+          "name": "Remplacer",
+          "description": "Remplace toutes les règles existantes au lieu de les compléter."
+        }
+      }
     }
   }
 }

@@ -31,18 +31,50 @@
   },
   "entity": {
     "binary_sensor": {
-      "echec_verification": { "name": "Check failed" }
+      "echec_verification": {
+        "name": "Check failed"
+      }
     },
     "button": {
-      "tester": { "name": "Test {nom}" }
+      "tester": {
+        "name": "Test {nom}"
+      }
     },
     "sensor": {
-      "derniere_execution": { "name": "Last run" },
-      "regles_actives": { "name": "Active rules" }
+      "derniere_execution": {
+        "name": "Last run"
+      },
+      "regles_actives": {
+        "name": "Active rules"
+      }
     },
     "switch": {
-      "actif": { "name": "Protocol enabled" },
-      "regle": { "name": "Rule {nom}" }
+      "actif": {
+        "name": "Protocol enabled"
+      },
+      "regle": {
+        "name": "Rule {nom}"
+      }
+    }
+  },
+  "services": {
+    "exporter_regles": {
+      "name": "Export rules",
+      "description": "Returns all Protocole Alarme rules (backup, copy). Administrators only."
+    },
+    "importer_regles": {
+      "name": "Import rules",
+      "description": "Adds rules (or replaces all rules). Each rule is checked before saving. Administrators only.",
+      "fields": {
+        "regles": {
+          "name": "Rules",
+          "description": "List of rules, in the format returned by “Export rules”."
+        },
+        "remplacer": {
+          "name": "Replace",
+          "description": "Replaces all existing rules instead of adding to them."
+        }
+      }
     }
   }
 }

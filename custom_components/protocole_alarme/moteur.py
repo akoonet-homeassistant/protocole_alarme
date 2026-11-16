@@ -343,6 +343,27 @@ class Moteur:
         await self._appliquer(recharger)
         return regle
 
+    async def async_importer(self, brutes: list[dict], remplacer: bool = False) -> list[dict]:
+        """Ajoute (ou remplace par) une liste de règles. Tout est vérifié avant de modifier quoi que ce soit."""
+        nouvelles: list[dict] = []
+        for brute in brutes:
+            if not isinstance(brute, dict):
+                raise vol.Invalid("regle_invalide")
+            # En ajout, chaque règle importée reçoit un nouvel identifiant (pas de collision)
+            regle = R.normaliser({**brute, "id": None} if not remplacer else brute)
+            self.valider_message(regle)
+            await self.async_valider_sequence(regle)
+            nouvelles.append(regle)
+        ids = [r["id"] for r in nouvelles]
+        if len(set(ids)) != len(ids):
+            raise vol.Invalid("regle_invalide: identifiants en double")
+        total = len(nouvelles) + (0 if remplacer else len(self.regles))
+        if total > REGLES_MAX:
+            raise vol.Invalid("trop_de_regles")
+        self.regles = nouvelles if remplacer else [*self.regles, *nouvelles]
+        await self._appliquer(True)
+        return nouvelles
+
     async def async_supprimer(self, regle_id: str) -> None:
         self.regles = [r for r in self.regles if r["id"] != regle_id]
         await self._appliquer(True)

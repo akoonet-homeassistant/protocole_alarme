@@ -1,0 +1,10 @@
+{
+  "services": {
+    "exporter_regles": {
+      "service": "mdi:export"
+    },
+    "importer_regles": {
+      "service": "mdi:import"
+    }
+  }
+}

@@ -94,6 +94,15 @@ Le bouton **Configurer** de l'intégration permet de changer d'alarme et d'affic
 
 Les identifiants exacts dépendent de la langue de Home Assistant au moment de l'installation.
 
+### Services
+
+| Service | Rôle |
+|---|---|
+| `protocole_alarme.exporter_regles` | Renvoie toutes les règles (réponse du service) : sauvegarde, copie vers une autre installation |
+| `protocole_alarme.importer_regles` | Ajoute une liste de règles (`regles`), ou remplace toutes les règles (`remplacer: true`). Tout est vérifié avant l'enregistrement : une seule règle invalide et rien n'est modifié |
+
+Ces services sont réservés aux administrateurs (et aux automatisations ou scripts de Home Assistant).
+
 ### Sécurité
 
 - Création, modification, duplication, suppression et test des règles depuis le panneau : **administrateurs et personnes autorisées** par un administrateur (vérifié côté serveur). Les autres utilisateurs voient les règles en lecture seule.
@@ -186,6 +195,15 @@ The screenshots above (French interface) show every screen; the interface switch
 | `binary_sensor.protocole_alarme_check_failed` | Problem when the last check failed |
 
 Exact entity IDs depend on Home Assistant's language at installation time.
+
+### Services
+
+| Service | Role |
+|---|---|
+| `protocole_alarme.exporter_regles` | Returns all rules (service response): backup, copy to another installation |
+| `protocole_alarme.importer_regles` | Adds a list of rules (`regles`), or replaces all rules (`remplacer: true`). Everything is checked before saving: one invalid rule and nothing is changed |
+
+These services are reserved to administrators (and to Home Assistant automations or scripts).
 
 ### Security
 

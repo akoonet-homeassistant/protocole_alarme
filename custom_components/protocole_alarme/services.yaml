@@ -1,0 +1,12 @@
+exporter_regles: {}
+importer_regles:
+  fields:
+    regles:
+      required: true
+      example: '[{"nom": "Volet du bar", "evenement": "armement", "modes": ["armed_away"], "conditions": [{"entity_id": "binary_sensor.fenetre_bar", "etat": "on"}], "actions": [{"type": "entite", "entity_id": "cover.volet_bar", "action": "fermer"}]}]'
+      selector:
+        object:
+    remplacer:
+      default: false
+      selector:
+        boolean:

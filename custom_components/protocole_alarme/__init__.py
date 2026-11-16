@@ -11,6 +11,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
 
 from . import websocket
+from .services import async_enregistrer_services
 from .const import DOMAIN, FORMAT_STOCKAGE, STATIC_URL
 from .moteur import Moteur
 from .panneau import async_installer_panneau, async_retirer_panneau
@@ -26,6 +27,7 @@ async def _preparer_frontend(hass: HomeAssistant) -> None:
     dossier = Path(__file__).parent / "frontend"
     await hass.http.async_register_static_paths([StaticPathConfig(STATIC_URL, str(dossier), False)])
     websocket.async_enregistrer(hass)
+    async_enregistrer_services(hass)
     hass.data[CLE_FRONTEND] = True
 
 
