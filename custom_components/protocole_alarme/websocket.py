@@ -101,24 +101,24 @@ async def ws_enregistrer(hass, connection, msg, moteur: Moteur) -> None:
     connection.send_result(msg["id"], {"regle": regle})
 
 
-@websocket_api.websocket_command({vol.Required("type"): f"{DOMAIN}/supprimer", vol.Required("id"): str})
+@websocket_api.websocket_command({vol.Required("type"): f"{DOMAIN}/supprimer", vol.Required("regle_id"): str})
 @websocket_api.require_admin
 @websocket_api.async_response
 @_avec_moteur
 async def ws_supprimer(hass, connection, msg, moteur: Moteur) -> None:
-    await moteur.async_supprimer(msg["id"])
+    await moteur.async_supprimer(msg["regle_id"])
     connection.send_result(msg["id"], {})
 
 
 @websocket_api.websocket_command({
-    vol.Required("type"): f"{DOMAIN}/dupliquer", vol.Required("id"): str, vol.Optional("suffixe", default="(copie)"): str,
+    vol.Required("type"): f"{DOMAIN}/dupliquer", vol.Required("regle_id"): str, vol.Optional("suffixe", default="(copie)"): str,
 })
 @websocket_api.require_admin
 @websocket_api.async_response
 @_avec_moteur
 async def ws_dupliquer(hass, connection, msg, moteur: Moteur) -> None:
     try:
-        regle = await moteur.async_dupliquer(msg["id"], msg["suffixe"][:20])
+        regle = await moteur.async_dupliquer(msg["regle_id"], msg["suffixe"][:20])
     except vol.Invalid as err:
         _erreur(connection, msg, err)
         return
@@ -126,13 +126,13 @@ async def ws_dupliquer(hass, connection, msg, moteur: Moteur) -> None:
 
 
 @websocket_api.websocket_command({
-    vol.Required("type"): f"{DOMAIN}/activer", vol.Required("id"): str, vol.Required("actif"): bool,
+    vol.Required("type"): f"{DOMAIN}/activer", vol.Required("regle_id"): str, vol.Required("actif"): bool,
 })
 @websocket_api.require_admin
 @websocket_api.async_response
 @_avec_moteur
 async def ws_activer(hass, connection, msg, moteur: Moteur) -> None:
-    await moteur.async_activer(msg["id"], msg["actif"])
+    await moteur.async_activer(msg["regle_id"], msg["actif"])
     connection.send_result(msg["id"], {})
 
 

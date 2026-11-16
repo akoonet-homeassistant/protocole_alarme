@@ -198,13 +198,13 @@ class ProtocoleAlarmePanel extends HTMLElement {
         case "onglet": this._onglet = d.v; this._vue = "liste"; break;
         case "evenement": this._evenement = d.v; break;
         case "actif": await this._ws("actif", { actif: !this._d.instantane.actif }); await this._charger(); return;
-        case "activer": await this._ws("activer", { id: d.id, actif: d.v !== "1" }); await this._charger(); return;
+        case "activer": await this._ws("activer", { regle_id: d.id, actif: d.v !== "1" }); await this._charger(); return;
         case "tester": await this._ws("tester", { regle: this._regle(d.id) }); this._annoncer(this.t("teste")); return;
-        case "dupliquer": await this._ws("dupliquer", { id: d.id, suffixe: this.t("copie") }); await this._attendreRechargement(); return;
+        case "dupliquer": await this._ws("dupliquer", { regle_id: d.id, suffixe: this.t("copie") }); await this._attendreRechargement(); return;
         case "supprimer":
           if (this._confirmer !== d.id) { this._confirmer = d.id; break; }
           this._confirmer = null;
-          await this._ws("supprimer", { id: d.id });
+          await this._ws("supprimer", { regle_id: d.id });
           this._annoncer(this.t("supprime"));
           await this._attendreRechargement();
           return;
