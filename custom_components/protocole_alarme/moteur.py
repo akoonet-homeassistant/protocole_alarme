@@ -90,6 +90,8 @@ class Moteur:
         self.editeurs = [str(u) for u in donnees.get("editeurs", []) if u]
         self.journal = list(donnees.get("journal", []))[:JOURNAL_MAX]
         self.dernier_mode = donnees.get("dernier_mode")
+        self.arme_depuis = dt_util.parse_datetime(donnees["arme_depuis"]) if donnees.get("arme_depuis") else None
+        self.tolerees: set[str] = set(donnees.get("tolerees", []))
         self.derniere_execution = donnees.get("derniere_execution")
         self.echec_verification = bool(donnees.get("echec_verification", False))
         if self.alarme:
@@ -117,6 +119,8 @@ class Moteur:
             "editeurs": self.editeurs,
             "journal": self.journal,
             "dernier_mode": self.dernier_mode,
+            "arme_depuis": self.arme_depuis.isoformat() if self.arme_depuis else None,
+            "tolerees": sorted(self.tolerees),
             "derniere_execution": self.derniere_execution,
             "echec_verification": self.echec_verification,
         }
@@ -140,6 +144,17 @@ class Moteur:
             return
         if evenement == EVT_ARMEMENT:
             self.dernier_mode = nouveau
+            self.arme_depuis = dt_util.utcnow()
+            # Règles « ignorer si déjà vrai à l'armement » : on retient celles dont la condition est déjà vraie
+            self.tolerees = {
+                r["id"] for r in self.regles
+                if r.get("surveiller") and r.get("tolerer") and r.get("conditions")
+                and R.conditions_remplies(r, self._etat)[0]
+            }
+            self._sauver()
+        else:
+            self.arme_depuis = None
+            self.tolerees = set()
             self._sauver()
         if not self.actif:
             self._noter(None, evenement, RES_PAUSE, "")
@@ -194,11 +209,14 @@ class Moteur:
         entity_id = event.data["entity_id"]
         ancien = event.data["old_state"].state if event.data["old_state"] else None
         nouveau = event.data["new_state"].state if event.data["new_state"] else None
+        depuis = (dt_util.utcnow() - self.arme_depuis).total_seconds() if self.arme_depuis else None
         for regle in self.regles:
             if (
                 R.concerne(regle, EVT_ARMEMENT, etat_alarme)
                 and R.declenchee_pendant(regle, entity_id, ancien, nouveau)
                 and regle["id"] not in self._regles_en_cours
+                and regle["id"] not in self.tolerees
+                and not (regle.get("grace_s") and depuis is not None and depuis < regle["grace_s"])
             ):
                 self._demarrer_tache(
                     copy.deepcopy(regle), EVT_SURVEILLANCE, etat_alarme,
@@ -215,7 +233,7 @@ class Moteur:
         script: Script | None = None
         try:
             entite_ls = simulateur.entite_mode(self.hass)
-            etapes = R.sequence_complete(regle, entite_ls, simulateur.options_mode(self.hass, entite_ls))
+            etapes = R.sequence_complete(regle, entite_ls, simulateur.options_mode(self.hass, entite_ls), self.alarme)
             etapes = await async_validate_actions_config(self.hass, cv.SCRIPT_SCHEMA(etapes))
             script = Script(
                 self.hass, etapes, f"{NOM_APPAREIL} : {regle['nom']}", DOMAIN,
@@ -470,7 +488,7 @@ class Moteur:
             return R.normaliser(brute)["sequence"]
         regle = R.normaliser({**brute, "avance": False})
         entite_ls = simulateur.entite_mode(self.hass) or "select.lights_simulator_mode"
-        return R.sequence_simple(regle, entite_ls, simulateur.options_mode(self.hass, entite_ls))
+        return R.sequence_simple(regle, entite_ls, simulateur.options_mode(self.hass, entite_ls), self.alarme)
 
     def instantane(self) -> dict[str, Any]:
         etat = self.hass.states.get(self.alarme) if self.alarme else None
@@ -479,6 +497,8 @@ class Moteur:
             "etat_alarme": etat.state if etat else None,
             "actif": self.actif,
             "dernier_mode": self.dernier_mode,
+            "arme_depuis": self.arme_depuis.isoformat() if self.arme_depuis else None,
+            "tolerees": sorted(self.tolerees),
             "derniere_execution": self.derniere_execution,
             "echec_verification": self.echec_verification,
             "en_cours": sum(len(t) for t in self._taches.values()),

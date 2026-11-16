@@ -173,6 +173,7 @@ class ProtocoleAlarmePanel extends HTMLElement {
 
   _cible(action) {
     if (action.type === "simulateur") return this.t("simulateur");
+    if (action.type === "alarme") return esc(this._nomEntite(this._d?.instantane?.alarme) || this.t("alarme"));
     if (action.type === "notification") return esc(this._servicesDe(action).map((x) => this._nomService(x)).join(", "));
     return action.entity_id ? this._nomEntite(action.entity_id) : this.t("choisir_entite_manquante");
   }
@@ -185,6 +186,7 @@ class ProtocoleAlarmePanel extends HTMLElement {
     if (p.preset) morceaux.push(esc(p.preset));
     if (p.temperature !== undefined && action.action === "temperature") morceaux.push(`${this._nombre(p.temperature)} °`);
     if (p.option) morceaux.push(esc(p.option));
+    if (action.type === "notification" && p.critique) morceaux.push(esc(this.t("critique").toLowerCase()));
     return morceaux.length ? ` (${morceaux.join(", ")})` : "";
   }
   _phrase(regle) {
@@ -236,6 +238,8 @@ class ProtocoleAlarmePanel extends HTMLElement {
         case "etape": await this._allerEtape(Number(d.v)); return;
         case "moment": b.evenement = d.v; if (d.v !== "armement") b.surveiller = false; break;
         case "surveiller": b.surveiller = !b.surveiller; break;
+        case "tolerer": b.tolerer = !b.tolerer; break;
+        case "critique": b.actions[i].params.critique = !b.actions[i].params.critique; break;
         case "mode": b.modes = b.modes.includes(d.v) ? b.modes.filter((m) => m !== d.v) : [...b.modes, d.v]; break;
         case "si": this._siCond = d.v === "1"; if (this._siCond && !b.conditions.length) this._ouvrirSelecteur("condition", null); break;
         case "ajouter-condition": this._ouvrirSelecteur("condition", null); return;
@@ -334,6 +338,7 @@ class ProtocoleAlarmePanel extends HTMLElement {
     switch (c.dataset.f) {
       case "param-select": b.actions[i].params[c.dataset.p] = c.value === "" ? undefined : c.value; break;
       case "etat-libre": b.conditions[i].etat = c.value.trim(); break;
+      case "grace": b.grace_s = Math.max(0, Math.min(600, Number(c.value) || 0)); break;
       case "verif-delai": b.verification.delai_s = Math.max(0, Number(c.value) || 0); break;
       case "verif-etat-libre": b.verification.etat = c.value.trim(); break;
       default: return;
@@ -361,7 +366,7 @@ class ProtocoleAlarmePanel extends HTMLElement {
 
   _regleVide(evenement = this._evenement) {
     return {
-      nom: "", actif: true, evenement, modes: [], conditions: [], actions: [], delai_s: 0,
+      nom: "", actif: true, evenement, modes: [], conditions: [], actions: [], delai_s: 0, grace_s: 0, tolerer: false,
       verification: { active: false, delai_s: 45, entity_id: null, etat: null, notifiers: [this._notifParDefaut()], message: null },
       avance: false, sequence: [],
     };
@@ -403,6 +408,16 @@ class ProtocoleAlarmePanel extends HTMLElement {
       case "lumiere":
         r.nom = this._langue === "fr" ? "Lumière de l'entrée" : "Hallway light";
         r.actions = [action("light", "allumer")];
+        break;
+      case "intrusion":
+        r.nom = this._langue === "fr" ? "Intrusion par une fenêtre" : "Window intrusion";
+        r.modes = ["armed_away", "armed_night"];
+        r.surveiller = true; r.grace_s = 60; r.tolerer = true;
+        r.conditions = [{ entity_id: "", etat: "on", _domaine: "binary_sensor" }];
+        r.actions = [
+          { type: "alarme", action: "declencher", params: {} },
+          { type: "notification", services: [this._notifParDefaut()], action: "envoyer", params: { message: this.t("notif_intrusion"), titre: this.t("titre_intrusion"), critique: true } },
+        ];
         break;
       case "notif":
         r.evenement = "desarmement";
@@ -596,6 +611,7 @@ class ProtocoleAlarmePanel extends HTMLElement {
     } else {
       let action;
       if (valeur === "@simulateur") action = { type: "simulateur", action: "demarrer", params: {} };
+      else if (valeur === "@alarme") action = { type: "alarme", action: "declencher", params: {} };
       else if (valeur === "@notification") action = { type: "notification", services: [this._notifParDefaut()], action: "envoyer", params: { message: this.t("notif_defaut"), titre: "" } };
       else {
         const actions = Object.keys(this._d.catalogue[domaineDe(valeur)] || {});
@@ -711,7 +727,8 @@ class ProtocoleAlarmePanel extends HTMLElement {
     const premiere = (r.actions || [])[0];
     const dom = r.avance ? "script" : premiere?.type === "entite" ? domaineDe(premiere.entity_id) : premiere?.type || "script";
     const verif = r.verification?.active ? `<div class="meta"><ha-icon icon="mdi:check-decagram-outline"></ha-icon>${this.t("verif_apres", { s: r.verification.delai_s })}</div>` : "";
-    const surveille = r.surveiller ? `<div class="meta"><ha-icon icon="mdi:eye-outline"></ha-icon>${this.t("surveiller_court")}</div>` : "";
+    const options = [r.grace_s ? this.t("grace_court", { s: r.grace_s }) : "", r.tolerer ? this.t("tolerer_court") : ""].filter(Boolean).join(" · ");
+    const surveille = r.surveiller ? `<div class="meta"><ha-icon icon="mdi:eye-outline"></ha-icon>${this.t("surveiller_court")}${options ? ` (${esc(options)})` : ""}</div>` : "";
     const delai = r.delai_s ? `<div class="meta"><ha-icon icon="mdi:timer-outline"></ha-icon>${this.t("delai_avant")} : ${r.delai_s} s</div>` : "";
     const confirmer = this._confirmer === r.id;
     return `
@@ -736,7 +753,7 @@ class ProtocoleAlarmePanel extends HTMLElement {
   }
 
   _modeles() {
-    const liste = [["garage", "garage-variant"], ["volet", "window-shutter"], ["simu", "home-lightbulb"], ["simu_stop", "home-lightbulb-outline"], ["lumiere", "lightbulb-on"], ["notif", "bell-ring"]];
+    const liste = [["garage", "garage-variant"], ["volet", "window-shutter"], ["simu", "home-lightbulb"], ["simu_stop", "home-lightbulb-outline"], ["lumiere", "lightbulb-on"], ["notif", "bell-ring"], ["intrusion", "alarm-light"]];
     return `
       <div class="entete-vue"><button type="button" class="icone-btn" data-a="onglet" data-v="regles" aria-label="${this.t("retour")}"><ha-icon icon="mdi:arrow-left"></ha-icon></button><h2>${this.t("modeles")}</h2></div>
       <p class="sous">${this.t("modeles_desc")}</p>
@@ -796,6 +813,16 @@ class ProtocoleAlarmePanel extends HTMLElement {
         <span class="noms"><span class="nom">${this.t("surveiller")}</span><span class="sous">${this.t("surveiller_desc")}</span></span>
         <span class="case ${b.surveiller ? "on" : ""}">${b.surveiller ? '<ha-icon icon="mdi:check"></ha-icon>' : ""}</span>
       </button>` : ""}
+      ${b.evenement === "armement" && b.surveiller ? `
+      <div class="carte bloc sous-options">
+        <label class="champ court"><span>${this.t("grace")}</span>
+          <input type="number" min="0" max="600" step="5" value="${b.grace_s || 0}" data-f="grace"></label>
+        <p class="sous">${this.t("grace_desc")}</p>
+        <button type="button" class="option ${b.tolerer ? "on" : ""}" aria-pressed="${!!b.tolerer}" data-a="tolerer">
+          <span class="noms"><span class="nom">${this.t("tolerer")}</span><span class="sous">${this.t("tolerer_desc")}</span></span>
+          <span class="case ${b.tolerer ? "on" : ""}">${b.tolerer ? '<ha-icon icon="mdi:check"></ha-icon>' : ""}</span>
+        </button>
+      </div>` : ""}
       <h4>${this.t("pour_modes")}</h4>
       <p class="sous">${this.t("aucun_coche")}</p>
       <div class="chips">
@@ -886,11 +913,24 @@ class ProtocoleAlarmePanel extends HTMLElement {
         ${ls.double_pilotage ? `<p class="avert">${this.t("ls_double")}</p>` : ""}
       </div>`;
     }
+    if (a.type === "alarme") {
+      return `<div class="carte bloc">${tete}
+        <button type="button" class="entite-btn" data-a="changer-action" data-i="${i}">${this._pastilleIcone("alarm_control_panel")}
+          <span class="noms"><span class="nom">${esc(this._nomEntite(this._d.instantane.alarme))}</span><span class="id">${esc(this._d.instantane.alarme || "")}</span></span><ha-icon icon="mdi:chevron-right"></ha-icon></button>
+        <div class="chips"><button type="button" class="chip on" aria-pressed="true" data-a="choix-action" data-i="${i}" data-v="declencher">${this.t("declencher_alarme")}</button></div>
+        <p class="sous">${this.t("declencher_alarme_desc")}</p>
+      </div>`;
+    }
     if (a.type === "notification") {
       return `<div class="carte bloc">${tete}
         <span class="etiquette">${this.t("service_notif")}</span>${this._choixServices(a.services || [], "notif-service", i)}
         <label class="champ"><span>${this.t("titre_notif")}</span><input type="text" data-f="titre" data-i="${i}" value="${esc(a.params.titre || "")}"></label>
         <label class="champ"><span>${this.t("message")}</span><textarea rows="2" data-f="message" data-i="${i}">${esc(a.params.message || "")}</textarea></label>
+        <button type="button" class="option ${a.params.critique ? "on" : ""}" aria-pressed="${!!a.params.critique}" data-a="critique" data-i="${i}">
+          <span class="ic orange"><ha-icon icon="mdi:bell-alert"></ha-icon></span>
+          <span class="noms"><span class="nom">${this.t("critique")}</span><span class="sous">${this.t("critique_desc")}</span></span>
+          <span class="case ${a.params.critique ? "on" : ""}">${a.params.critique ? '<ha-icon icon="mdi:check"></ha-icon>' : ""}</span>
+        </button>
       </div>`;
     }
     const actions = Object.keys(this._d.catalogue[domaineDe(a.entity_id)] || {});
@@ -987,7 +1027,7 @@ class ProtocoleAlarmePanel extends HTMLElement {
     return `
       <div class="carte recap">
         <div class="tete">${this._pastilleIcone(dom || "script")}<span class="nom grand">${esc(b.nom)}</span></div>
-        ${ligne(this.t("etape_quand").toUpperCase(), `${this.t(b.evenement === "armement" ? "a_larmement" : "au_desarmement")}${b.surveiller ? ` ${this.t("et_pendant")}` : ""} · <b>${esc(this._modesTexte(b))}</b>`)}
+        ${ligne(this.t("etape_quand").toUpperCase(), `${this.t(b.evenement === "armement" ? "a_larmement" : "au_desarmement")}${b.surveiller ? ` ${this.t("et_pendant")}` : ""}${b.surveiller && b.grace_s ? ` · ${esc(this.t("grace_court", { s: b.grace_s }))}` : ""}${b.surveiller && b.tolerer ? ` · ${esc(this.t("tolerer_court"))}` : ""} · <b>${esc(this._modesTexte(b))}</b>`)}
         ${ligne(this.t("etape_si").toUpperCase(), conds)}
         ${ligne(this.t("etape_alors").toUpperCase(), actions + (b.delai_s ? `<br><span class="sous">${this.t("delai_avant")} : ${b.delai_s} s</span>` : ""))}
         ${v.active ? ligne(this.t("verifier_resultat").split(" ")[0].toUpperCase(), `${this.t("apres")} ${v.delai_s} s, <b>${esc(this._nomEntite(v.entity_id))}</b> ${this.t("doit_etre")} <i>${esc(this._etatLisible(v.entity_id, v.etat))}</i>${(v.notifiers || []).length ? `, ${this.t("sinon_prevenir")} ${esc(v.notifiers.map((x) => this._nomService(x)).join(", "))}` : ""}`) : ""}
@@ -1031,11 +1071,12 @@ class ProtocoleAlarmePanel extends HTMLElement {
     const presents = new Set(Object.keys(this._hass.states).map(domaineDe));
     const domaines = (action ? Object.keys(catalogue) : ["binary_sensor", "cover", "lock", "light", "switch", "person", "device_tracker", "climate", "sensor", "input_boolean", "media_player"]).filter((d) => presents.has(d));
     const ls = this._d.simulateur;
-    const speciaux = action && sel.index === null || (action && ["simulateur", "notification"].includes(this._brouillon.actions[sel.index]?.type))
+    const speciaux = action && sel.index === null || (action && ["simulateur", "notification", "alarme"].includes(this._brouillon.actions[sel.index]?.type))
       ? `
         ${ls.statut === "pret"
           ? `<button type="button" class="ligne-entite speciale" data-a="choisir" data-v="@simulateur">${this._pastilleIcone("simulateur")}<span class="noms"><span class="nom">${this.t("simulateur")}</span><span class="sous">Lights Simulator · ${esc(ls.entite)}</span></span></button>`
           : this._carteLs()}
+        <button type="button" class="ligne-entite speciale" data-a="choisir" data-v="@alarme">${this._pastilleIcone("alarm_control_panel")}<span class="noms"><span class="nom">${this.t("declencher_alarme")}</span><span class="sous">${esc(this._nomEntite(this._d.instantane.alarme))}</span></span></button>
         <button type="button" class="ligne-entite speciale" data-a="choisir" data-v="@notification">${this._pastilleIcone("notification")}<span class="noms"><span class="nom">${this.t("notification")}</span><span class="sous">${this.t("notification_desc")}</span></span></button>`
       : "";
     return `
@@ -1288,6 +1329,7 @@ const STYLE = `
   .option.grande { flex-direction: column; align-items: flex-start; gap: 8px; min-height: 150px; padding: 16px 14px; } .option.grande.on { padding: 15px 13px; }
   .option .coche { position: absolute; top: 14px; right: 14px; width: 20px; height: 20px; border-radius: 50%; border: 2px solid #9aa3ae; }
   .option.on .coche { border: 6px solid var(--bleu); }
+  .sous-options { margin-top: -4px; }
   .case { margin-left: auto; width: 24px; height: 24px; flex: none; border-radius: 6px; border: 2px solid #9aa3ae; display: inline-flex; align-items: center; justify-content: center; }
   .case.on { background: var(--bleu); border-color: var(--bleu); color: #fff; } .case ha-icon { --mdc-icon-size: 16px; }
   .option .rond { width: 20px; height: 20px; flex: none; border-radius: 50%; border: 2px solid #9aa3ae; } .option.on .rond { border: 6px solid var(--bleu); }

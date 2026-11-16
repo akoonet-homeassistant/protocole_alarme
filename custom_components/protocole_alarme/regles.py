@@ -17,7 +17,17 @@ from .const import ETATS_ARMES, EVENEMENTS, EVT_ARMEMENT, LS_INDEX_MODE, LS_LIBE
 TYPE_ENTITE = "entite"
 TYPE_SIMULATEUR = "simulateur"
 TYPE_NOTIFICATION = "notification"
-TYPES_ACTION = [TYPE_ENTITE, TYPE_SIMULATEUR, TYPE_NOTIFICATION]
+TYPE_ALARME = "alarme"  # agit sur l'alarme suivie
+TYPES_ACTION = [TYPE_ENTITE, TYPE_SIMULATEUR, TYPE_NOTIFICATION, TYPE_ALARME]
+ACTIONS_ALARME = {"declencher": "alarm_control_panel.alarm_trigger"}
+
+# Notification « critique » : sonne même en mode silencieux (iOS) / canal alarme (Android)
+DONNEES_CRITIQUES = {
+    "push": {"sound": {"name": "default", "critical": 1, "volume": 1.0}},
+    "ttl": 0,
+    "priority": "high",
+    "channel": "alarm_stream",
+}
 
 IMPULSION = "impulsion"
 
@@ -161,6 +171,8 @@ SCHEMA_REGLE = vol.Schema(
         vol.Optional("actions", default=list): [dict],
         vol.Optional("delai_s", default=0): _secondes(3600),
         vol.Optional("surveiller", default=False): bool,
+        vol.Optional("grace_s", default=0): _secondes(600),
+        vol.Optional("tolerer", default=False): bool,
         vol.Optional("verification", default=None): vol.Any(None, SCHEMA_VERIFICATION),
         vol.Optional("avance", default=False): bool,
         vol.Optional("sequence", default=list): vol.All([dict], vol.Length(max=SEQUENCE_MAX)),
@@ -196,6 +208,11 @@ def normaliser_action(brute: dict) -> dict:
     if not isinstance(params_bruts, dict):
         raise vol.Invalid("action_invalide")
 
+    if type_action == TYPE_ALARME:
+        if nom_action not in ACTIONS_ALARME:
+            raise vol.Invalid("action_inconnue")
+        return {"type": TYPE_ALARME, "action": nom_action, "params": {}}
+
     if type_action == TYPE_SIMULATEUR:
         if nom_action not in ACTIONS_SIMULATEUR:
             raise vol.Invalid("action_inconnue")
@@ -212,6 +229,7 @@ def normaliser_action(brute: dict) -> dict:
             "params": {
                 "message": _texte(500)(params_bruts.get("message")),
                 "titre": _texte(120, obligatoire=False)(params_bruts.get("titre")),
+                "critique": bool(params_bruts.get("critique", False)),
             },
         }
 
@@ -273,15 +291,19 @@ def normaliser(brute: dict) -> dict:
 _CODES = {"texte_requis", "entite_invalide", "action_invalide", "action_inconnue", "regle_invalide"}
 
 
-def sequence_simple(regle: dict, entite_ls: str | None = None, options_ls: list | None = None) -> list[dict]:
+def sequence_simple(
+    regle: dict, entite_ls: str | None = None, options_ls: list | None = None, alarme: str | None = None
+) -> list[dict]:
     """Traduit les actions du mode simple en étapes de script Home Assistant."""
     etapes: list[dict] = []
     for action in regle["actions"]:
-        etapes.extend(_etapes_action(action, entite_ls, options_ls))
+        etapes.extend(_etapes_action(action, entite_ls, options_ls, alarme))
     return etapes
 
 
-def sequence_complete(regle: dict, entite_ls: str | None = None, options_ls: list | None = None) -> list[dict]:
+def sequence_complete(
+    regle: dict, entite_ls: str | None = None, options_ls: list | None = None, alarme: str | None = None
+) -> list[dict]:
     """Script complet de la règle : délai éventuel puis actions (simples ou avancées)."""
     etapes: list[dict] = []
     if regle.get("delai_s"):
@@ -289,12 +311,16 @@ def sequence_complete(regle: dict, entite_ls: str | None = None, options_ls: lis
     if regle.get("avance"):
         etapes.extend(copy.deepcopy(regle["sequence"]))
     else:
-        etapes.extend(sequence_simple(regle, entite_ls, options_ls))
+        etapes.extend(sequence_simple(regle, entite_ls, options_ls, alarme))
     return etapes
 
 
-def _etapes_action(action: dict, entite_ls: str | None, options_ls: list | None) -> list[dict]:
+def _etapes_action(action: dict, entite_ls: str | None, options_ls: list | None, alarme: str | None = None) -> list[dict]:
     type_action = action["type"]
+    if type_action == TYPE_ALARME:
+        if not alarme:
+            raise ErreurRegle("alarme_absente")
+        return [_appel(ACTIONS_ALARME[action["action"]], alarme)]
     if type_action == TYPE_SIMULATEUR:
         if not entite_ls:
             raise ErreurRegle("simulateur_absent")
@@ -308,14 +334,17 @@ def _etapes_action(action: dict, entite_ls: str | None, options_ls: list | None)
         if params.get("titre"):
             donnees["title"] = params["titre"]
         services = action.get("services") or [action["service"]]
-        return [
-            {
+        etapes = []
+        for service in services:
+            donnees_service = dict(donnees)
+            if params.get("critique") and service != "persistent_notification":
+                donnees_service["data"] = copy.deepcopy(DONNEES_CRITIQUES)
+            etapes.append({
                 "action": "persistent_notification.create" if service == "persistent_notification" else service,
-                "data": dict(donnees),
+                "data": donnees_service,
                 "continue_on_error": True,
-            }
-            for service in services
-        ]
+            })
+        return etapes
 
     entity_id = action["entity_id"]
     domaine = _domaine(entity_id)

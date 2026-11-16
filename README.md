@@ -29,11 +29,15 @@ Protocole Alarme lance des actions quand vous **armez** ou **désarmez** votre a
 - **Personnes autorisées** : en plus des administrateurs, d'autres utilisateurs peuvent être autorisés à modifier les règles (onglet Réglages).
 - **Choix d'entité lisible** : recherche, filtres par type, et pour chaque entité son type (Fenêtre, Porte de garage, Mouvement…), son état et son icône.
 - **Surveillance pendant l'armement** (option) : si la condition d'une règle d'armement devient vraie alors que l'alarme est déjà armée (ex. une fenêtre s'ouvre), la règle s'exécute aussi. Un retour d'« indisponible » ne déclenche rien.
+- **Ne rien faire pendant… après l'armement** (surveillance) : la surveillance ne commence qu'après ce délai (0 à 600 s), le temps que les autres règles ferment les volets.
+- **Ignorer si c'est déjà le cas à l'armement** (surveillance) : une fenêtre restée ouverte au moment de l'armement est tolérée jusqu'au désarmement ; seules les nouvelles ouvertures comptent. Évite le conflit avec une règle qui ferme le volet d'une fenêtre ouverte.
+- **Déclencher l'alarme** : action qui déclenche l'alarme suivie (intrusion).
+- **Notification critique** : sur l'application mobile Home Assistant, sonne même en mode silencieux / Ne pas déranger.
 - **Délai avant exécution** par règle.
 - **Annulation** : désarmer l'alarme interrompt les règles d'armement encore en cours (délai, impulsion, vérification), et inversement.
 - **Redémarrage de Home Assistant** : ne déclenche aucune règle.
 - **Simulateur de présence** : pilote [Lights Simulator](https://github.com/akoonet-homeassistant/lights_simulator) (Démarrer, Repasser en Auto, Arrêter). S'il n'est pas installé, le panneau propose de l'installer par HACS ; s'il suit déjà l'alarme lui-même, un avertissement signale le double pilotage.
-- **Modèles** pour démarrer en deux clics (garage, volet, simulateur, lumière, notification).
+- **Modèles** pour démarrer en deux clics (garage, volet, simulateur, lumière, notification, **déclencher l'alarme si une fenêtre s'ouvre**).
 - **Mode avancé** : une règle peut être modifiée en YAML (syntaxe des actions de script Home Assistant), avec les variables `regle`, `evenement` et `mode_alarme`.
 - **Bouton Tester** : exécute une règle sans armer l'alarme (les conditions restent vérifiées).
 - **Journal** des 50 dernières exécutions.
@@ -68,7 +72,7 @@ Ouvrez le panneau **Protocole Alarme** dans la barre latérale.
 
 Le bouton **Configurer** de l'intégration permet de changer d'alarme et d'afficher ou masquer le panneau dans la barre latérale. Masqué, il reste accessible à l'adresse `/protocole-alarme`.
 
-**Quand une règle s'exécute-t-elle ?** À l'armement, quand l'alarme passe de *désarmée* ou *en cours d'armement* à un état *armée* (absent, nuit, présent, vacances, personnalisé). Au désarmement, quand elle repasse à *désarmée* depuis un état armé, en attente ou déclenché. Pour le désarmement, le filtre de modes porte sur le mode dans lequel l'alarme était armée. Avec l'option « Surveiller aussi pendant l'armement », une règle d'armement s'exécute aussi quand l'une de ses conditions devient vraie alors que l'alarme est armée dans l'un de ses modes.
+**Quand une règle s'exécute-t-elle ?** À l'armement, quand l'alarme passe de *désarmée* ou *en cours d'armement* à un état *armée* (absent, nuit, présent, vacances, personnalisé). Au désarmement, quand elle repasse à *désarmée* depuis un état armé, en attente ou déclenché. Pour le désarmement, le filtre de modes porte sur le mode dans lequel l'alarme était armée. Avec l'option « Surveiller aussi pendant l'armement », une règle d'armement s'exécute aussi quand l'une de ses conditions devient vraie alors que l'alarme est armée dans l'un de ses modes, après le délai après armement éventuel, et sauf si la condition était déjà vraie à l'armement et que l'option « Ignorer si c'est déjà le cas à l'armement » est cochée.
 
 ### Captures d'écran
 
@@ -80,7 +84,8 @@ Le bouton **Configurer** de l'intégration permet de changer d'alarme et d'affic
 | **Choix de l'entité** — type, état, filtres<br>![Choix de l'entité](docs/screenshots/selecteur_condition.png) | **Choix de l'action** — Lights Simulator non installé<br>![Sélecteur](docs/screenshots/selecteur_simulateur.png) |
 | **Mode avancé** — YAML<br>![Avancé](docs/screenshots/avance.png) | **Réglages**<br>![Réglages](docs/screenshots/reglages.png) |
 | **Journal**<br>![Journal](docs/screenshots/journal.png) | **Entités**<br>![Entités](docs/screenshots/entites.png) |
-| **Import / export**<br>![Import](docs/screenshots/import.png) | |
+| **Import / export**<br>![Import](docs/screenshots/import.png) | **Intrusion — Quand ?** — délai après armement, fenêtres tolérées<br>![Intrusion](docs/screenshots/intrusion.png) |
+| **Intrusion — Alors…** — déclencher l'alarme, notification critique<br>![Intrusion Alors](docs/screenshots/intrusion_alors.png) | |
 
 *Captures réalisées sur une installation de démonstration : toutes les entités sont fictives.*
 
@@ -121,6 +126,8 @@ Ces services sont réservés aux administrateurs (et aux automatisations ou scri
 - Une seule alarme suivie.
 - Les conditions comparent l'état exact d'une entité (pas de seuil numérique) ; pour des cas plus complexes, utilisez le mode avancé.
 - Lights Simulator est piloté par son sélecteur « Mode » ; il doit être installé et configuré séparément.
+- La vérification ne fait que prévenir : elle ne déclenche pas l'alarme si l'état attendu n'est pas atteint.
+- La notification critique utilise les paramètres de l'application mobile Home Assistant ; les autres services de notification les ignorent.
 
 ---
 
@@ -143,11 +150,15 @@ Protocole Alarme runs actions when you **arm** or **disarm** your Home Assistant
 - **Allowed people**: besides administrators, other users can be allowed to change rules (Settings tab).
 - **Readable entity picker**: search, type filters, and for each entity its type (Window, Garage door, Motion…), state and icon.
 - **Watch while armed** (option): if an arming rule's condition becomes true while the alarm is already armed (e.g. a window opens), the rule runs too. Coming back from “unavailable” triggers nothing.
+- **Do nothing for… after arming** (watch): watching only starts after this delay (0 to 600 s), giving other rules time to close the shutters.
+- **Ignore if already the case when armed** (watch): a window left open when arming is tolerated until disarming; only new openings count. Avoids conflicts with a rule that closes the shutter of an open window.
+- **Trigger the alarm**: action that triggers the followed alarm (intrusion).
+- **Critical notification**: on the Home Assistant mobile app, rings even in silent / Do Not Disturb mode.
 - **Delay before running** per rule.
 - **Cancellation**: disarming stops arming rules still in progress (delay, pulse, check), and the other way round.
 - **Home Assistant restart**: never triggers a rule.
 - **Presence simulator**: drives [Lights Simulator](https://github.com/akoonet-homeassistant/lights_simulator) (Start, Back to Auto, Stop). If it is not installed, the panel offers to install it through HACS; if it already follows the alarm by itself, a warning flags the double control.
-- **Templates** to get started in two clicks (garage, shutter, simulator, light, notification).
+- **Templates** to get started in two clicks (garage, shutter, simulator, light, notification, **trigger the alarm if a window opens**).
 - **Advanced mode**: a rule can be edited in YAML (Home Assistant script action syntax), with the `regle`, `evenement` and `mode_alarme` variables.
 - **Test button**: runs a rule without arming the alarm (conditions are still checked).
 - **Log** of the last 50 runs.
@@ -182,7 +193,7 @@ Open the **Protocole Alarme** panel in the sidebar.
 
 The integration's **Configure** button changes the alarm and shows or hides the panel in the sidebar. When hidden, it stays reachable at `/protocole-alarme`.
 
-**When does a rule run?** On arming, when the alarm goes from *disarmed* or *arming* to an *armed* state (away, night, home, vacation, custom). On disarming, when it goes back to *disarmed* from an armed, pending or triggered state. For disarming rules, the mode filter applies to the mode the alarm was armed in. With the “Also watch while armed” option, an arming rule also runs when one of its conditions becomes true while the alarm is armed in one of its modes.
+**When does a rule run?** On arming, when the alarm goes from *disarmed* or *arming* to an *armed* state (away, night, home, vacation, custom). On disarming, when it goes back to *disarmed* from an armed, pending or triggered state. For disarming rules, the mode filter applies to the mode the alarm was armed in. With the “Also watch while armed” option, an arming rule also runs when one of its conditions becomes true while the alarm is armed in one of its modes, after the optional delay after arming, unless the condition was already true when armed and the “Ignore if already the case when armed” option is checked.
 
 ### Screenshots
 
@@ -225,6 +236,8 @@ These services are reserved to administrators (and to Home Assistant automations
 - A single alarm is followed.
 - Conditions compare an entity's exact state (no numeric threshold); use advanced mode for more complex cases.
 - Lights Simulator is driven through its “Mode” select; it must be installed and set up separately.
+- The check only notifies: it does not trigger the alarm if the expected state is not reached.
+- The critical notification uses Home Assistant mobile app settings; other notification services ignore them.
 
 ## Licence / License
 
