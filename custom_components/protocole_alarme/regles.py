@@ -12,7 +12,7 @@ from typing import Any
 
 import voluptuous as vol
 
-from .const import ETATS_ARMES, EVENEMENTS, LS_INDEX_MODE, LS_LIBELLES_MODE
+from .const import ETATS_ARMES, EVENEMENTS, EVT_ARMEMENT, LS_INDEX_MODE, LS_LIBELLES_MODE
 
 TYPE_ENTITE = "entite"
 TYPE_SIMULATEUR = "simulateur"
@@ -160,6 +160,7 @@ SCHEMA_REGLE = vol.Schema(
         vol.Optional("conditions", default=list): [SCHEMA_CONDITION],
         vol.Optional("actions", default=list): [dict],
         vol.Optional("delai_s", default=0): _secondes(3600),
+        vol.Optional("surveiller", default=False): bool,
         vol.Optional("verification", default=None): vol.Any(None, SCHEMA_VERIFICATION),
         vol.Optional("avance", default=False): bool,
         vol.Optional("sequence", default=list): vol.All([dict], vol.Length(max=SEQUENCE_MAX)),
@@ -256,6 +257,11 @@ def normaliser(brute: dict) -> dict:
         regle["sequence"] = []
         if not regle["actions"]:
             raise vol.Invalid("action_requise")
+    if regle["surveiller"]:
+        if regle["evenement"] != EVT_ARMEMENT:
+            regle["surveiller"] = False
+        elif not regle["conditions"]:
+            raise vol.Invalid("surveiller_condition")
     verif = regle["verification"]
     if verif:
         verif["notifiers"] = services_notification(verif.get("notifiers") or [], verif.pop("notifier", None))
@@ -353,3 +359,23 @@ def conditions_remplies(regle: dict, lire_etat) -> tuple[bool, str]:
         if actuel != condition["etat"]:
             return False, f"{condition['entity_id']} = {actuel}"
     return True, ""
+
+
+ETATS_INCONNUS = {None, "unknown", "unavailable"}
+
+
+def entites_surveillees(regles: list[dict]) -> set[str]:
+    """Entités des conditions des règles qui surveillent aussi pendant l'armement."""
+    return {
+        c["entity_id"]
+        for r in regles
+        if r.get("actif", True) and r.get("surveiller") and r.get("evenement") == EVT_ARMEMENT
+        for c in r.get("conditions") or []
+    }
+
+
+def declenchee_pendant(regle: dict, entity_id: str, ancien: str | None, nouveau: str | None) -> bool:
+    """Une condition de la règle vient-elle de devenir vraie (vrai changement, pas un retour d'indisponibilité) ?"""
+    if not regle.get("surveiller") or ancien in ETATS_INCONNUS or ancien == nouveau:
+        return False
+    return any(c["entity_id"] == entity_id and c["etat"] == nouveau for c in regle.get("conditions") or [])

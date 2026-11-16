@@ -52,7 +52,7 @@ class RegleActive(EntiteRegle, SwitchEntity):
     @property
     def extra_state_attributes(self) -> dict:
         regle = self.regle or {}
-        return {"evenement": regle.get("evenement"), "modes": regle.get("modes", [])}
+        return {"evenement": regle.get("evenement"), "modes": regle.get("modes", []), "surveiller": bool(regle.get("surveiller"))}
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         await self.moteur.async_activer(self.regle_id, True)

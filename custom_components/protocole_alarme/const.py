@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 DOMAIN = "protocole_alarme"
-VERSION = "2026.11.5"
+VERSION = "2026.11.6"
 NOM_APPAREIL = "Protocole Alarme"
 
 PANEL_URL = "protocole-alarme"
@@ -24,6 +24,8 @@ CONF_BARRE_LATERALE = "barre_laterale"
 EVT_ARMEMENT = "armement"
 EVT_DESARMEMENT = "desarmement"
 EVENEMENTS = [EVT_ARMEMENT, EVT_DESARMEMENT]
+# Journal : règle lancée parce qu'une condition est devenue vraie alors que l'alarme était déjà armée
+EVT_SURVEILLANCE = "surveillance"
 
 # États « armée » d'une alarme Home Assistant
 ETATS_ARMES = [

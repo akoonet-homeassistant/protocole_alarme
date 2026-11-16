@@ -18,7 +18,7 @@ from homeassistant.helpers import entity_registry as er
 
 from . import regles as R
 from . import simulateur
-from .const import DOMAIN, ETATS_ARMES, VERSION
+from .const import DOMAIN, ETATS_ARMES, REGLES_MAX, VERSION
 from .moteur import MESSAGE_ECHEC_DEFAUT, Moteur
 
 
@@ -112,7 +112,7 @@ def _erreur(connection, msg, err: Exception) -> None:
 def async_enregistrer(hass: HomeAssistant) -> None:
     for commande in (
         ws_etat, ws_enregistrer, ws_supprimer, ws_dupliquer, ws_activer, ws_tester, ws_actif,
-        ws_vider_journal, ws_vers_yaml, ws_depuis_yaml, ws_editeurs,
+        ws_vider_journal, ws_vers_yaml, ws_depuis_yaml, ws_editeurs, ws_exporter, ws_importer,
     ):
         websocket_api.async_register_command(hass, commande)
 
@@ -270,3 +270,31 @@ async def ws_editeurs(hass, connection, msg, moteur: Moteur) -> None:
     connus = {u["id"] for u in await _utilisateurs(hass) if not u["admin"]}
     await moteur.async_changer_editeurs([u for u in msg["editeurs"] if u in connus])
     connection.send_result(msg["id"], {"editeurs": moteur.editeurs})
+
+
+@websocket_api.websocket_command({vol.Required("type"): f"{DOMAIN}/exporter"})
+@websocket_api.async_response
+@_avec_editeur
+async def ws_exporter(hass, connection, msg, moteur: Moteur) -> None:
+    """Toutes les règles, pour un fichier de sauvegarde."""
+    connection.send_result(msg["id"], {"application": DOMAIN, "version": VERSION, "regles": moteur.regles})
+
+
+@websocket_api.websocket_command({
+    vol.Required("type"): f"{DOMAIN}/importer",
+    vol.Required("regles"): vol.All([dict], vol.Length(min=1, max=REGLES_MAX)),
+    vol.Optional("remplacer", default=False): bool,
+})
+@websocket_api.async_response
+@_avec_editeur
+async def ws_importer(hass, connection, msg, moteur: Moteur) -> None:
+    """Importe un fichier de règles (tout ou rien). Les scripts avancés restent réservés aux administrateurs."""
+    if not connection.user.is_admin and any(r.get("avance") for r in msg["regles"]):
+        connection.send_error(msg["id"], websocket_api.ERR_UNAUTHORIZED, "avance_admin")
+        return
+    try:
+        nouvelles = await moteur.async_importer(msg["regles"], msg["remplacer"])
+    except vol.Invalid as err:
+        _erreur(connection, msg, err)
+        return
+    connection.send_result(msg["id"], {"importees": len(nouvelles)})

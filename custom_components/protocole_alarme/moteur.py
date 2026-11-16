@@ -32,6 +32,7 @@ from .const import (
     ETATS_AVANT_DESARMEMENT,
     EVT_ARMEMENT,
     EVT_DESARMEMENT,
+    EVT_SURVEILLANCE,
     FORMAT_STOCKAGE,
     JOURNAL_MAX,
     NOM_APPAREIL,
@@ -73,6 +74,8 @@ class Moteur:
         self.echec_verification: bool = False
         self._taches: dict[str, set[asyncio.Task]] = {EVT_ARMEMENT: set(), EVT_DESARMEMENT: set(), EVT_TEST: set()}
         self._desabonner = None
+        self._desabonner_surveillance = None
+        self._regles_en_cours: set[str] = set()
 
     # ------------------------------------------------------------------ cycle de vie
 
@@ -91,11 +94,17 @@ class Moteur:
         self.echec_verification = bool(donnees.get("echec_verification", False))
         if self.alarme:
             self._desabonner = async_track_state_change_event(self.hass, [self.alarme], self._alarme_changee)
+        self._abonner_surveillance()
 
     async def async_arreter(self) -> None:
         if self._desabonner:
             self._desabonner()
             self._desabonner = None
+        if self._desabonner_surveillance:
+            self._desabonner_surveillance()
+            self._desabonner_surveillance = None
+        self._desabonner_surveillance = None
+        self._regles_en_cours: set[str] = set()
         for taches in self._taches.values():
             for tache in list(taches):
                 tache.cancel()
@@ -147,12 +156,54 @@ class Moteur:
             if R.concerne(regle, evenement, mode):
                 self._demarrer_tache(copy.deepcopy(regle), evenement, mode, contexte)
 
-    def _demarrer_tache(self, regle: dict, evenement: str, mode: str | None, contexte: Context | None = None) -> None:
+    def _demarrer_tache(
+        self, regle: dict, evenement: str, mode: str | None, contexte: Context | None = None, groupe: str | None = None
+    ) -> None:
+        """Lance une règle en tâche de fond. groupe : ensemble annulé par l'événement inverse."""
         tache = self.entry.async_create_background_task(
             self.hass, self._executer(regle, evenement, mode, contexte or Context()), f"{DOMAIN} {regle['nom']}"
         )
-        self._taches[evenement].add(tache)
-        tache.add_done_callback(self._taches[evenement].discard)
+        ensemble = self._taches[groupe or evenement]
+        ensemble.add(tache)
+        tache.add_done_callback(ensemble.discard)
+        if regle.get("id"):
+            self._regles_en_cours.add(regle["id"])
+            tache.add_done_callback(lambda _t, rid=regle["id"]: self._regles_en_cours.discard(rid))
+
+    # ------------------------------------------------------------------ surveillance pendant l'armement
+
+    @callback
+    def _abonner_surveillance(self) -> None:
+        """Suit les entités des conditions des règles « surveiller aussi pendant l'armement »."""
+        if self._desabonner_surveillance:
+            self._desabonner_surveillance()
+            self._desabonner_surveillance = None
+        entites = R.entites_surveillees(self.regles)
+        if entites:
+            self._desabonner_surveillance = async_track_state_change_event(
+                self.hass, sorted(entites), self._entite_changee
+            )
+
+    @callback
+    def _entite_changee(self, event: Event[EventStateChangedData]) -> None:
+        if not self.actif:
+            return
+        etat_alarme = self._etat(self.alarme) if self.alarme else None
+        if etat_alarme not in ETATS_ARMES:
+            return
+        entity_id = event.data["entity_id"]
+        ancien = event.data["old_state"].state if event.data["old_state"] else None
+        nouveau = event.data["new_state"].state if event.data["new_state"] else None
+        for regle in self.regles:
+            if (
+                R.concerne(regle, EVT_ARMEMENT, etat_alarme)
+                and R.declenchee_pendant(regle, entity_id, ancien, nouveau)
+                and regle["id"] not in self._regles_en_cours
+            ):
+                self._demarrer_tache(
+                    copy.deepcopy(regle), EVT_SURVEILLANCE, etat_alarme,
+                    Context(parent_id=event.context.id), groupe=EVT_ARMEMENT,
+                )
 
     # ------------------------------------------------------------------ exécution
 
@@ -408,6 +459,7 @@ class Moteur:
     async def _appliquer(self, recharger: bool) -> None:
         await self.store.async_save(self._a_sauver())
         self._signaler()
+        self._abonner_surveillance()
         if recharger:
             # Les entités par règle (interrupteur, bouton) suivent la liste
             self.hass.config_entries.async_schedule_reload(self.entry.entry_id)

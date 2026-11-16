@@ -29,7 +29,7 @@ const ICONES_CLASSE = {
   shutter: "mdi:window-shutter", blind: "mdi:blinds", garage: "mdi:garage", gate: "mdi:gate", curtain: "mdi:curtains",
   outlet: "mdi:power-socket-fr",
 };
-const ICONE_EVENEMENT = { armement: "mdi:lock", desarmement: "mdi:lock-open-variant", test: "mdi:play" };
+const ICONE_EVENEMENT = { armement: "mdi:lock", desarmement: "mdi:lock-open-variant", test: "mdi:play", surveillance: "mdi:eye-outline" };
 
 const esc = (v) =>
   String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -220,7 +220,8 @@ class ProtocoleAlarmePanel extends HTMLElement {
         case "modele": this._ouvrirAssistant(this._modele(d.v)); return;
         case "fermer-assistant": this._vue = "liste"; this._brouillon = null; this._selecteur = null; break;
         case "etape": await this._allerEtape(Number(d.v)); return;
-        case "moment": b.evenement = d.v; break;
+        case "moment": b.evenement = d.v; if (d.v !== "armement") b.surveiller = false; break;
+        case "surveiller": b.surveiller = !b.surveiller; break;
         case "mode": b.modes = b.modes.includes(d.v) ? b.modes.filter((m) => m !== d.v) : [...b.modes, d.v]; break;
         case "si": this._siCond = d.v === "1"; if (this._siCond && !b.conditions.length) this._ouvrirSelecteur("condition", null); break;
         case "ajouter-condition": this._ouvrirSelecteur("condition", null); return;
@@ -261,6 +262,11 @@ class ProtocoleAlarmePanel extends HTMLElement {
           this._d.editeurs = res.editeurs;
           break;
         }
+        case "exporter": await this._exporter(false); return;
+        case "copier-export": await this._exporter(true); return;
+        case "import-mode": this._import.remplacer = d.v === "1"; this._import.confirmer = false; break;
+        case "import-annuler": this._import = null; break;
+        case "import-valider": await this._importer(); return;
         case "vider-journal": await this._ws("vider_journal"); await this._charger(); return;
         case "plus-info":
           this.dispatchEvent(new CustomEvent("hass-more-info", { detail: { entityId: d.id }, bubbles: true, composed: true }));
@@ -307,6 +313,7 @@ class ProtocoleAlarmePanel extends HTMLElement {
 
   _changement(e) {
     const c = e.target;
+    if (c.dataset.f === "fichier-import") { this._lireFichier(c.files?.[0]); c.value = ""; return; }
     const b = this._brouillon;
     if (!c.dataset.f) return;
     const i = c.dataset.i !== undefined ? Number(c.dataset.i) : null;
@@ -359,12 +366,14 @@ class ProtocoleAlarmePanel extends HTMLElement {
         r.modes = ["armed_away", "armed_night"];
         r.nom = this._langue === "fr" ? "Fermer le garage" : "Close the garage";
         r.conditions = [{ entity_id: "", etat: "on", _domaine: "binary_sensor" }];
+        r.surveiller = true;
         r.actions = [action("switch", "impulsion", { duree: 1 })];
         r.verification = { ...r.verification, active: true, delai_s: 45, etat: "off" };
         break;
       case "volet":
         r.nom = this._langue === "fr" ? "Volet si fenêtre ouverte" : "Shutter if window open";
         r.conditions = [{ entity_id: "", etat: "on", _domaine: "binary_sensor" }];
+        r.surveiller = true;
         r.actions = [action("cover", "fermer")];
         break;
       case "simu":
@@ -445,6 +454,7 @@ class ProtocoleAlarmePanel extends HTMLElement {
     if (etape > this._etape) {
       if (this._etape === 1 && !b.nom.trim()) { this._annoncer(this.t("err.texte_requis"), true); return; }
       if (this._etape === 2 && this._siCond && b.conditions.some((c) => !c.entity_id || !c.etat)) { this._annoncer(this.t("err.entite_invalide"), true); return; }
+      if (this._etape === 2 && b.surveiller && (!this._siCond || !b.conditions.length)) { this._annoncer(this.t("err.surveiller_condition"), true); return; }
       if (this._etape === 3) {
         try {
           await this._brouillonPret();
@@ -676,6 +686,7 @@ class ProtocoleAlarmePanel extends HTMLElement {
     const premiere = (r.actions || [])[0];
     const dom = r.avance ? "script" : premiere?.type === "entite" ? domaineDe(premiere.entity_id) : premiere?.type || "script";
     const verif = r.verification?.active ? `<div class="meta"><ha-icon icon="mdi:check-decagram-outline"></ha-icon>${this.t("verif_apres", { s: r.verification.delai_s })}</div>` : "";
+    const surveille = r.surveiller ? `<div class="meta"><ha-icon icon="mdi:eye-outline"></ha-icon>${this.t("surveiller_court")}</div>` : "";
     const delai = r.delai_s ? `<div class="meta"><ha-icon icon="mdi:timer-outline"></ha-icon>${this.t("delai_avant")} : ${r.delai_s} s</div>` : "";
     const confirmer = this._confirmer === r.id;
     return `
@@ -686,7 +697,7 @@ class ProtocoleAlarmePanel extends HTMLElement {
           ${this._interrupteur(r.actif, `data-a="activer" data-id="${esc(r.id)}" data-v="${r.actif ? 1 : 0}"`, r.nom)}
         </div>
         <div class="phrase">${this._phrase(r)}</div>
-        ${verif}${delai}
+        ${surveille}${verif}${delai}
         ${this._editeur ? `<div class="actions-carte">
           <button type="button" class="lien" data-a="tester" data-id="${esc(r.id)}"><ha-icon icon="mdi:play"></ha-icon>${this.t("tester")}</button>
           <button type="button" class="lien" data-a="modifier" data-id="${esc(r.id)}"><ha-icon icon="mdi:pencil"></ha-icon>${this.t("modifier")}</button>
@@ -754,6 +765,12 @@ class ProtocoleAlarmePanel extends HTMLElement {
         ${option("armement", "mdi:lock", "orange", "a_larmement", "quand_active")}
         ${option("desarmement", "mdi:lock-open-variant", "vert", "au_desarmement", "quand_coupe")}
       </div>
+      ${b.evenement === "armement" ? `
+      <button type="button" class="option ${b.surveiller ? "on" : ""}" aria-pressed="${!!b.surveiller}" data-a="surveiller">
+        <span class="ic bleu"><ha-icon icon="mdi:eye-outline"></ha-icon></span>
+        <span class="noms"><span class="nom">${this.t("surveiller")}</span><span class="sous">${this.t("surveiller_desc")}</span></span>
+        <span class="case ${b.surveiller ? "on" : ""}">${b.surveiller ? '<ha-icon icon="mdi:check"></ha-icon>' : ""}</span>
+      </button>` : ""}
       <h4>${this.t("pour_modes")}</h4>
       <p class="sous">${this.t("aucun_coche")}</p>
       <div class="chips">
@@ -945,7 +962,7 @@ class ProtocoleAlarmePanel extends HTMLElement {
     return `
       <div class="carte recap">
         <div class="tete">${this._pastilleIcone(dom || "script")}<span class="nom grand">${esc(b.nom)}</span></div>
-        ${ligne(this.t("etape_quand").toUpperCase(), `${this.t(b.evenement === "armement" ? "a_larmement" : "au_desarmement")} · <b>${esc(this._modesTexte(b))}</b>`)}
+        ${ligne(this.t("etape_quand").toUpperCase(), `${this.t(b.evenement === "armement" ? "a_larmement" : "au_desarmement")}${b.surveiller ? ` ${this.t("et_pendant")}` : ""} · <b>${esc(this._modesTexte(b))}</b>`)}
         ${ligne(this.t("etape_si").toUpperCase(), conds)}
         ${ligne(this.t("etape_alors").toUpperCase(), actions + (b.delai_s ? `<br><span class="sous">${this.t("delai_avant")} : ${b.delai_s} s</span>` : ""))}
         ${v.active ? ligne(this.t("verifier_resultat").split(" ")[0].toUpperCase(), `${this.t("apres")} ${v.delai_s} s, <b>${esc(this._nomEntite(v.entity_id))}</b> ${this.t("doit_etre")} <i>${esc(this._etatLisible(v.entity_id, v.etat))}</i>${(v.notifiers || []).length ? `, ${this.t("sinon_prevenir")} ${esc(v.notifiers.map((x) => this._nomService(x)).join(", "))}` : ""}`) : ""}
@@ -1055,6 +1072,78 @@ class ProtocoleAlarmePanel extends HTMLElement {
       ${j.length ? `<ul class="journal">${lignes}</ul>` : `<p class="sous">${this.t("journal_vide")}</p>`}</div>`;
   }
 
+  _carteImportExport() {
+    const imp = this._import;
+    const apercu = imp ? `
+      <div class="apercu">
+        <span class="etiquette">${this.t("import_trouve", { n: imp.regles.length })}</span>
+        <span>${imp.regles.slice(0, 12).map((r) => esc(r.nom || "?")).join(" · ")}${imp.regles.length > 12 ? " …" : ""}</span>
+      </div>
+      <button type="button" class="option ${!imp.remplacer ? "on" : ""}" aria-pressed="${!imp.remplacer}" data-a="import-mode" data-v="0"><span class="rond"></span>
+        <span class="noms"><span class="nom">${this.t("import_ajouter")}</span><span class="sous">${this.t("import_ajouter_desc")}</span></span></button>
+      <button type="button" class="option ${imp.remplacer ? "on" : ""}" aria-pressed="${!!imp.remplacer}" data-a="import-mode" data-v="1"><span class="rond"></span>
+        <span class="noms"><span class="nom">${this.t("import_remplacer")}</span><span class="sous">${this.t("import_remplacer_desc", { n: (this._d.regles || []).length })}</span></span></button>
+      <div class="deux">
+        <button type="button" class="btn" data-a="import-annuler">${this.t("annuler")}</button>
+        <button type="button" class="btn primaire ${imp.remplacer ? "danger-plein" : ""}" data-a="import-valider">${imp.confirmer ? this.t("confirmer") : this.t("importer")}</button>
+      </div>` : "";
+    return `<div class="carte">
+      <h2>${this.t("import_export_titre")}</h2>
+      <p class="sous">${this.t("import_export_desc")}</p>
+      <div class="deux">
+        <button type="button" class="btn" data-a="exporter"><ha-icon icon="mdi:download"></ha-icon>${this.t("exporter")}</button>
+        <label class="btn"><ha-icon icon="mdi:upload"></ha-icon>${this.t("importer_fichier")}
+          <input type="file" accept=".json,application/json" data-f="fichier-import" class="masque"></label>
+      </div>
+      <button type="button" class="lien" data-a="copier-export"><ha-icon icon="mdi:content-copy"></ha-icon>${this.t("copier_export")}</button>
+      ${apercu}
+    </div>`;
+  }
+
+  async _exporter(copier) {
+    const res = await this._ws("exporter");
+    const texte = JSON.stringify(res, null, 2);
+    if (copier) {
+      await navigator.clipboard.writeText(texte);
+      this._annoncer(this.t("export_copie", { n: res.regles.length }));
+      return;
+    }
+    const url = URL.createObjectURL(new Blob([texte], { type: "application/json" }));
+    const lien = document.createElement("a");
+    lien.href = url;
+    lien.download = `protocole_alarme_${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(lien);
+    lien.click();
+    lien.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+    this._annoncer(this.t("export_fait", { n: res.regles.length }));
+  }
+
+  async _lireFichier(fichier) {
+    if (!fichier) return;
+    if (fichier.size > 1_000_000) { this._annoncer(this.t("err.fichier_invalide"), true); return; }
+    try {
+      const donnees = JSON.parse(await fichier.text());
+      const regles = Array.isArray(donnees) ? donnees : donnees?.regles;
+      if (!Array.isArray(regles) || !regles.length || !regles.every((r) => r && typeof r === "object")) throw new Error("format");
+      this._import = { regles, remplacer: false, confirmer: false };
+    } catch (err) {
+      this._import = null;
+      this._annoncer(this.t("err.fichier_invalide"), true);
+      return;
+    }
+    this._dessiner();
+  }
+
+  async _importer() {
+    const imp = this._import;
+    if (imp.remplacer && !imp.confirmer) { imp.confirmer = true; this._dessiner(); return; }
+    const res = await this._ws("importer", { regles: imp.regles, remplacer: imp.remplacer });
+    this._import = null;
+    this._annoncer(this.t("import_fait", { n: res.importees }));
+    await this._attendreRechargement();
+  }
+
   _carteEditeurs() {
     const editeurs = new Set(this._d.editeurs || []);
     const lignes = (this._d.utilisateurs || []).map((u) => `
@@ -1090,6 +1179,7 @@ class ProtocoleAlarmePanel extends HTMLElement {
              ${ls.double_pilotage ? `<p class="avert">${this.t("ls_double")}</p>` : ""}`
           : ""}
       </div>`}
+      ${this._editeur ? this._carteImportExport() : ""}
       ${this._admin ? this._carteEditeurs() : ""}
       <div class="carte"><h2>${this.t("version")}</h2><p class="sous">Protocole Alarme ${esc(d.version)}</p></div>
     </div>`;
@@ -1147,6 +1237,8 @@ const STYLE = `
   .sw.on span { background: var(--bleu); } .sw.on span::after { left: 21px; } .sw:disabled { cursor: default; opacity: .6; }
   .btn { min-height: 44px; padding: 0 16px; border-radius: 12px; border: 1px solid #c9ced6; background: var(--carte); color: var(--primary-text-color, #1c1c1e); font: inherit; font-size: 15px; font-weight: 500; display: inline-flex; align-items: center; justify-content: center; gap: 8px; cursor: pointer; text-decoration: none; }
   .btn.grand { min-height: 50px; width: 100%; } .btn.primaire { background: var(--bleu); border-color: var(--bleu); color: #fff; }
+  .btn.danger-plein { background: var(--error-color, #b3261e); border-color: var(--error-color, #b3261e); }
+  label.btn { position: relative; } .masque { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; }
   .btn.contour { border-color: var(--bleu); color: var(--bleu); } .btn.pointille { border: 1px dashed #9aa3ae; background: transparent; color: var(--bleu); min-height: 48px; }
   .boutons-bas { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: 10px; }
   .icone-btn { width: 44px; height: 44px; border: 0; background: transparent; color: inherit; display: inline-flex; align-items: center; justify-content: center; border-radius: 22px; cursor: pointer; font-size: 20px; flex: none; }
@@ -1171,6 +1263,8 @@ const STYLE = `
   .option.grande { flex-direction: column; align-items: flex-start; gap: 8px; min-height: 150px; padding: 16px 14px; } .option.grande.on { padding: 15px 13px; }
   .option .coche { position: absolute; top: 14px; right: 14px; width: 20px; height: 20px; border-radius: 50%; border: 2px solid #9aa3ae; }
   .option.on .coche { border: 6px solid var(--bleu); }
+  .case { margin-left: auto; width: 24px; height: 24px; flex: none; border-radius: 6px; border: 2px solid #9aa3ae; display: inline-flex; align-items: center; justify-content: center; }
+  .case.on { background: var(--bleu); border-color: var(--bleu); color: #fff; } .case ha-icon { --mdc-icon-size: 16px; }
   .option .rond { width: 20px; height: 20px; flex: none; border-radius: 50%; border: 2px solid #9aa3ae; } .option.on .rond { border: 6px solid var(--bleu); }
   .chips { display: flex; flex-wrap: wrap; gap: 8px; }
   .chip { min-height: 44px; padding: 0 16px; border-radius: 999px; border: 1px solid #d6dae0; background: var(--carte); color: inherit; font: inherit; font-size: 14px; font-weight: 500; display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }

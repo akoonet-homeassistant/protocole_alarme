@@ -28,6 +28,7 @@ Protocole Alarme lance des actions quand vous **armez** ou **désarmez** votre a
 - **Message d'échec modifiable** : le message par défaut est affiché et peut être personnalisé avec les variables `{{ regle }}`, `{{ entite }}`, `{{ etat_actuel }}`, `{{ etat_attendu }}`, avec un aperçu ; les états reprennent les libellés de Home Assistant.
 - **Personnes autorisées** : en plus des administrateurs, d'autres utilisateurs peuvent être autorisés à modifier les règles (onglet Réglages).
 - **Choix d'entité lisible** : recherche, filtres par type, et pour chaque entité son type (Fenêtre, Porte de garage, Mouvement…), son état et son icône.
+- **Surveillance pendant l'armement** (option) : si la condition d'une règle d'armement devient vraie alors que l'alarme est déjà armée (ex. une fenêtre s'ouvre), la règle s'exécute aussi. Un retour d'« indisponible » ne déclenche rien.
 - **Délai avant exécution** par règle.
 - **Annulation** : désarmer l'alarme interrompt les règles d'armement encore en cours (délai, impulsion, vérification), et inversement.
 - **Redémarrage de Home Assistant** : ne déclenche aucune règle.
@@ -36,6 +37,7 @@ Protocole Alarme lance des actions quand vous **armez** ou **désarmez** votre a
 - **Mode avancé** : une règle peut être modifiée en YAML (syntaxe des actions de script Home Assistant), avec les variables `regle`, `evenement` et `mode_alarme`.
 - **Bouton Tester** : exécute une règle sans armer l'alarme (les conditions restent vérifiées).
 - **Journal** des 50 dernières exécutions.
+- **Import / export** des règles depuis le panneau (fichier JSON ou presse-papiers), en ajout ou en remplacement.
 - **Panneau latéral** « Protocole Alarme » consultable par tous ; création, modification et test réservés aux administrateurs et aux personnes qu'ils autorisent.
 - **Interface en français et en anglais**, selon la langue de l'utilisateur.
 
@@ -62,11 +64,11 @@ Ouvrez le panneau **Protocole Alarme** dans la barre latérale.
 | Règles | Règles d'armement et de désarmement, activation, test, modification, duplication, suppression ; ajout par l'assistant ou à partir d'un modèle |
 | Entités | Les entités créées, avec leur état |
 | Journal | Les dernières exécutions : règle, moment, résultat, détail |
-| Réglages | Alarme suivie, protocole actif ou en pause, état de Lights Simulator, personnes autorisées à modifier les règles (administrateurs) |
+| Réglages | Alarme suivie, protocole actif ou en pause, état de Lights Simulator, import / export des règles, personnes autorisées à modifier les règles (administrateurs) |
 
 Le bouton **Configurer** de l'intégration permet de changer d'alarme et d'afficher ou masquer le panneau dans la barre latérale. Masqué, il reste accessible à l'adresse `/protocole-alarme`.
 
-**Quand une règle s'exécute-t-elle ?** À l'armement, quand l'alarme passe de *désarmée* ou *en cours d'armement* à un état *armée* (absent, nuit, présent, vacances, personnalisé). Au désarmement, quand elle repasse à *désarmée* depuis un état armé, en attente ou déclenché. Pour le désarmement, le filtre de modes porte sur le mode dans lequel l'alarme était armée.
+**Quand une règle s'exécute-t-elle ?** À l'armement, quand l'alarme passe de *désarmée* ou *en cours d'armement* à un état *armée* (absent, nuit, présent, vacances, personnalisé). Au désarmement, quand elle repasse à *désarmée* depuis un état armé, en attente ou déclenché. Pour le désarmement, le filtre de modes porte sur le mode dans lequel l'alarme était armée. Avec l'option « Surveiller aussi pendant l'armement », une règle d'armement s'exécute aussi quand l'une de ses conditions devient vraie alors que l'alarme est armée dans l'un de ses modes.
 
 ### Captures d'écran
 
@@ -78,6 +80,7 @@ Le bouton **Configurer** de l'intégration permet de changer d'alarme et d'affic
 | **Choix de l'entité** — type, état, filtres<br>![Choix de l'entité](docs/screenshots/selecteur_condition.png) | **Choix de l'action** — Lights Simulator non installé<br>![Sélecteur](docs/screenshots/selecteur_simulateur.png) |
 | **Mode avancé** — YAML<br>![Avancé](docs/screenshots/avance.png) | **Réglages**<br>![Réglages](docs/screenshots/reglages.png) |
 | **Journal**<br>![Journal](docs/screenshots/journal.png) | **Entités**<br>![Entités](docs/screenshots/entites.png) |
+| **Import / export**<br>![Import](docs/screenshots/import.png) | |
 
 *Captures réalisées sur une installation de démonstration : toutes les entités sont fictives.*
 
@@ -139,6 +142,7 @@ Protocole Alarme runs actions when you **arm** or **disarm** your Home Assistant
 - **Editable failure message**: the default message is shown and can be customized with the `{{ regle }}`, `{{ entite }}`, `{{ etat_actuel }}`, `{{ etat_attendu }}` variables, with a preview; states use Home Assistant's labels.
 - **Allowed people**: besides administrators, other users can be allowed to change rules (Settings tab).
 - **Readable entity picker**: search, type filters, and for each entity its type (Window, Garage door, Motion…), state and icon.
+- **Watch while armed** (option): if an arming rule's condition becomes true while the alarm is already armed (e.g. a window opens), the rule runs too. Coming back from “unavailable” triggers nothing.
 - **Delay before running** per rule.
 - **Cancellation**: disarming stops arming rules still in progress (delay, pulse, check), and the other way round.
 - **Home Assistant restart**: never triggers a rule.
@@ -147,6 +151,7 @@ Protocole Alarme runs actions when you **arm** or **disarm** your Home Assistant
 - **Advanced mode**: a rule can be edited in YAML (Home Assistant script action syntax), with the `regle`, `evenement` and `mode_alarme` variables.
 - **Test button**: runs a rule without arming the alarm (conditions are still checked).
 - **Log** of the last 50 runs.
+- **Import / export** of rules from the panel (JSON file or clipboard), adding or replacing.
 - **Sidebar panel** “Protocole Alarme” readable by everyone; creating, editing and testing are reserved to administrators and the people they allow.
 - **French and English interface**, following the user's language.
 
@@ -173,11 +178,11 @@ Open the **Protocole Alarme** panel in the sidebar.
 | Rules | Arming and disarming rules, enable, test, edit, duplicate, delete; add with the wizard or from a template |
 | Entities | The created entities with their state |
 | Log | Latest runs: rule, moment, result, detail |
-| Settings | Followed alarm, protocol enabled or paused, Lights Simulator status, people allowed to change rules (administrators) |
+| Settings | Followed alarm, protocol enabled or paused, Lights Simulator status, rule import / export, people allowed to change rules (administrators) |
 
 The integration's **Configure** button changes the alarm and shows or hides the panel in the sidebar. When hidden, it stays reachable at `/protocole-alarme`.
 
-**When does a rule run?** On arming, when the alarm goes from *disarmed* or *arming* to an *armed* state (away, night, home, vacation, custom). On disarming, when it goes back to *disarmed* from an armed, pending or triggered state. For disarming rules, the mode filter applies to the mode the alarm was armed in.
+**When does a rule run?** On arming, when the alarm goes from *disarmed* or *arming* to an *armed* state (away, night, home, vacation, custom). On disarming, when it goes back to *disarmed* from an armed, pending or triggered state. For disarming rules, the mode filter applies to the mode the alarm was armed in. With the “Also watch while armed” option, an arming rule also runs when one of its conditions becomes true while the alarm is armed in one of its modes.
 
 ### Screenshots
 
