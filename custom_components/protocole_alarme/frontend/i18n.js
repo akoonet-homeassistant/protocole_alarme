@@ -30,6 +30,7 @@ export const TEXTES = {
     action_n: "Action {n}", retirer: "Retirer",
     verifier_resultat: "Vérifier le résultat", apres: "Après", doit_etre: "doit être", sinon_prevenir: "sinon prévenir",
     personne: "Personne (journal seulement)",
+    plusieurs_destinataires: "Touchez plusieurs destinataires pour prévenir plusieurs personnes. Aucun = journal seulement.",
     verif_note: "Pas de nouvel essai automatique : une 2ᵉ impulsion pourrait rouvrir un garage.",
     delai_avant: "Délai avant exécution",
     precedent: "Précédent", suivant: "Suivant", annuler: "Annuler", enregistrer: "Enregistrer", retour: "Retour",
@@ -48,7 +49,7 @@ export const TEXTES = {
     ls_configurer: "Configurer Lights Simulator", ls_configurer_note: "Lights Simulator est installé mais pas encore configuré.",
     ls_double: "Lights Simulator suit déjà l'alarme lui-même (mode Auto). Avec une règle sur le simulateur, il sera piloté deux fois : désactivez l'une des deux.",
     ls_ici: "Utilisé par vos règles", ls_entite: "Entité pilotée",
-    message: "Message", titre_notif: "Titre (facultatif)", service_notif: "Envoyer à",
+    message: "Message", titre_notif: "Titre (facultatif)", service_notif: "Envoyer à (un ou plusieurs)",
     notif_defaut: "Alarme : règle « {{ regle }} » exécutée.",
     duree_impulsion: "Durée de l'impulsion", position: "Position", luminosite: "Luminosité", preset: "Préréglage",
     temperature: "Température", option: "Option", luminosite_inchangee: "Inchangée",
@@ -110,6 +111,7 @@ export const TEXTES = {
     action_n: "Action {n}", retirer: "Remove",
     verifier_resultat: "Check the result", apres: "After", doit_etre: "must be", sinon_prevenir: "otherwise notify",
     personne: "Nobody (log only)",
+    plusieurs_destinataires: "Tap several recipients to notify several people. None = log only.",
     verif_note: "No automatic retry: a second pulse could reopen a garage.",
     delai_avant: "Delay before running",
     precedent: "Back", suivant: "Next", annuler: "Cancel", enregistrer: "Save", retour: "Back",
@@ -128,7 +130,7 @@ export const TEXTES = {
     ls_configurer: "Set up Lights Simulator", ls_configurer_note: "Lights Simulator is installed but not set up yet.",
     ls_double: "Lights Simulator already follows the alarm by itself (Auto mode). With a simulator rule it will be driven twice: disable one of them.",
     ls_ici: "Used by your rules", ls_entite: "Controlled entity",
-    message: "Message", titre_notif: "Title (optional)", service_notif: "Send to",
+    message: "Message", titre_notif: "Title (optional)", service_notif: "Send to (one or more)",
     notif_defaut: "Alarm: rule “{{ regle }}” ran.",
     duree_impulsion: "Pulse length", position: "Position", luminosite: "Brightness", preset: "Preset",
     temperature: "Temperature", option: "Option", luminosite_inchangee: "Unchanged",
@@ -223,5 +225,43 @@ export const ETATS = {
     paused: "Paused", idle: "Idle", disarmed: "Disarmed", armed_away: "Armed away", armed_home: "Armed home",
     armed_night: "Armed night", armed_vacation: "Armed vacation", armed_custom_bypass: "Armed custom",
     arming: "Arming…", pending: "Pending", triggered: "Triggered", unavailable: "Unavailable", unknown: "Unknown",
+  },
+};
+
+// Type affiché sous le nom d'une entité : classe d'appareil d'abord, sinon domaine
+export const TYPES = {
+  fr: {
+    classe: {
+      door: "Porte", garage_door: "Porte de garage", window: "Fenêtre", opening: "Ouverture", motion: "Mouvement",
+      occupancy: "Occupation", presence: "Présence", battery: "Batterie", battery_charging: "Charge", plug: "Prise",
+      power: "Alimentation", problem: "Problème", safety: "Sécurité", smoke: "Fumée", moisture: "Fuite d'eau", gas: "Gaz",
+      lock: "Verrou", connectivity: "Connexion", temperature: "Température", humidity: "Humidité", illuminance: "Luminosité",
+      vibration: "Vibration", tamper: "Sabotage", running: "Fonctionnement", shutter: "Volet", blind: "Store",
+      garage: "Garage", gate: "Portail", curtain: "Rideau", awning: "Auvent", outlet: "Prise", energy: "Énergie",
+    },
+    domaine: {
+      binary_sensor: "Capteur", sensor: "Mesure", cover: "Volet", light: "Lumière", switch: "Interrupteur",
+      input_boolean: "Interrupteur virtuel", fan: "Ventilateur", siren: "Sirène", button: "Bouton", input_button: "Bouton virtuel",
+      lock: "Serrure", climate: "Chauffage", media_player: "Média", scene: "Scène", script: "Script",
+      automation: "Automatisation", select: "Liste", input_select: "Liste virtuelle", valve: "Vanne",
+      person: "Personne", device_tracker: "Localisation", alarm_control_panel: "Alarme",
+    },
+  },
+  en: {
+    classe: {
+      door: "Door", garage_door: "Garage door", window: "Window", opening: "Opening", motion: "Motion",
+      occupancy: "Occupancy", presence: "Presence", battery: "Battery", battery_charging: "Charging", plug: "Plug",
+      power: "Power", problem: "Problem", safety: "Safety", smoke: "Smoke", moisture: "Moisture", gas: "Gas",
+      lock: "Lock", connectivity: "Connectivity", temperature: "Temperature", humidity: "Humidity", illuminance: "Illuminance",
+      vibration: "Vibration", tamper: "Tamper", running: "Running", shutter: "Shutter", blind: "Blind",
+      garage: "Garage", gate: "Gate", curtain: "Curtain", awning: "Awning", outlet: "Outlet", energy: "Energy",
+    },
+    domaine: {
+      binary_sensor: "Sensor", sensor: "Measurement", cover: "Cover", light: "Light", switch: "Switch",
+      input_boolean: "Toggle", fan: "Fan", siren: "Siren", button: "Button", input_button: "Input button",
+      lock: "Lock", climate: "Climate", media_player: "Media", scene: "Scene", script: "Script",
+      automation: "Automation", select: "Select", input_select: "Input select", valve: "Valve",
+      person: "Person", device_tracker: "Tracker", alarm_control_panel: "Alarm",
+    },
   },
 };

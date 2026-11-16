@@ -1,7 +1,7 @@
 // Protocole Alarme — panneau latéral : règles (assistant en 3 étapes), entités, journal, réglages.
 
 const VERSION_URL = new URL(import.meta.url).search;
-const { TEXTES, MODES, ACTIONS, ACTIONS_DOMAINE, DOMAINES, ETATS } = await import(`./i18n.js${VERSION_URL}`);
+const { TEXTES, MODES, ACTIONS, ACTIONS_DOMAINE, DOMAINES, ETATS, TYPES } = await import(`./i18n.js${VERSION_URL}`);
 
 const DOMAINE = "protocole_alarme";
 const ORDRE_MODES = ["armed_away", "armed_night", "armed_home", "armed_vacation", "armed_custom_bypass"];
@@ -18,6 +18,16 @@ const ICONES = {
 const COULEURS = {
   cover: "bleu", light: "jaune", switch: "gris", input_boolean: "gris", lock: "vert", climate: "orange", binary_sensor: "orange",
   simulateur: "jaune", notification: "violet", scene: "violet", script: "violet", automation: "violet",
+};
+const ICONES_CLASSE = {
+  door: "mdi:door", garage_door: "mdi:garage", window: "mdi:window-closed-variant", opening: "mdi:square-rounded-outline",
+  motion: "mdi:motion-sensor", occupancy: "mdi:home-account", presence: "mdi:home-account", battery: "mdi:battery",
+  battery_charging: "mdi:battery-charging", plug: "mdi:power-plug", power: "mdi:flash", problem: "mdi:alert-circle-outline",
+  safety: "mdi:shield-alert-outline", smoke: "mdi:smoke-detector", moisture: "mdi:water", gas: "mdi:gas-cylinder",
+  lock: "mdi:lock-open-variant", connectivity: "mdi:wifi", temperature: "mdi:thermometer", humidity: "mdi:water-percent",
+  illuminance: "mdi:brightness-5", vibration: "mdi:vibrate", tamper: "mdi:shield-alert", running: "mdi:play-circle-outline",
+  shutter: "mdi:window-shutter", blind: "mdi:blinds", garage: "mdi:garage", gate: "mdi:gate", curtain: "mdi:curtains",
+  outlet: "mdi:power-socket-fr",
 };
 const ICONE_EVENEMENT = { armement: "mdi:lock", desarmement: "mdi:lock-open-variant", test: "mdi:play" };
 
@@ -127,14 +137,23 @@ class ProtocoleAlarmePanel extends HTMLElement {
   _nomService(s) {
     if (!s) return "";
     if (s === "persistent_notification") return "Home Assistant";
-    return s.replace("notify.", "").replace("mobile_app_", "").replaceAll("_", " ");
+    const nom = s.replace("notify.", "").replace("mobile_app_", "").replaceAll("_", " ");
+    return nom.charAt(0).toUpperCase() + nom.slice(1);
+  }
+  _servicesDe(action) { return action.services || (action.service ? [action.service] : []); }
+  _choixServices(choisis, nomAction, i) {
+    const services = this._d.notifications || [];
+    return `<div class="chips">${services.map((s) => {
+      const on = choisis.includes(s);
+      return `<button type="button" class="chip ${on ? "on" : ""}" aria-pressed="${on}" data-a="${nomAction}" data-i="${i}" data-v="${esc(s)}">${on ? '<ha-icon icon="mdi:check"></ha-icon>' : ""}${esc(this._nomService(s))}</button>`;
+    }).join("")}</div>`;
   }
   _libelleMode(m) { return MODES[this._langue][m] || m; }
   _nombre(v) { return String(v).replace(".", this._langue === "fr" ? "," : "."); }
 
   _cible(action) {
     if (action.type === "simulateur") return this.t("simulateur");
-    if (action.type === "notification") return esc(this._nomService(action.service));
+    if (action.type === "notification") return esc(this._servicesDe(action).map((x) => this._nomService(x)).join(", "));
     return action.entity_id ? this._nomEntite(action.entity_id) : `<em>${this.t("choisir_entite_manquante")}</em>`;
   }
   _detailParams(action) {
@@ -209,6 +228,17 @@ class ProtocoleAlarmePanel extends HTMLElement {
         case "verif": b.verification.active = !b.verification.active; this._completerVerif(); break;
         case "verif-entite": this._ouvrirSelecteur("verif", null); return;
         case "verif-etat": b.verification.etat = d.v; break;
+        case "verif-notif": {
+          const l = b.verification.notifiers;
+          b.verification.notifiers = l.includes(d.v) ? l.filter((x) => x !== d.v) : [...l, d.v];
+          break;
+        }
+        case "notif-service": {
+          const l = b.actions[i].services;
+          if (l.includes(d.v) && l.length === 1) break;
+          b.actions[i].services = l.includes(d.v) ? l.filter((x) => x !== d.v) : [...l, d.v];
+          break;
+        }
         case "delai": b.delai_s = Math.max(0, Math.min(3600, (b.delai_s || 0) + Number(d.v))); break;
         case "choisir": this._choisir(d.v); return;
         case "fermer-selecteur": this._selecteur = null; break;
@@ -258,11 +288,9 @@ class ProtocoleAlarmePanel extends HTMLElement {
     if (!c.dataset.f) return;
     const i = c.dataset.i !== undefined ? Number(c.dataset.i) : null;
     switch (c.dataset.f) {
-      case "service": b.actions[i].service = c.value; break;
       case "param-select": b.actions[i].params[c.dataset.p] = c.value === "" ? undefined : c.value; break;
       case "etat-libre": b.conditions[i].etat = c.value.trim(); break;
       case "verif-delai": b.verification.delai_s = Math.max(0, Number(c.value) || 0); break;
-      case "verif-notifier": b.verification.notifier = c.value || null; break;
       case "verif-etat-libre": b.verification.etat = c.value.trim(); break;
       default: return;
     }
@@ -282,7 +310,7 @@ class ProtocoleAlarmePanel extends HTMLElement {
   _regleVide(evenement = this._evenement) {
     return {
       nom: "", actif: true, evenement, modes: [], conditions: [], actions: [], delai_s: 0,
-      verification: { active: false, delai_s: 45, entity_id: null, etat: null, notifier: this._notifParDefaut(), message: null },
+      verification: { active: false, delai_s: 45, entity_id: null, etat: null, notifiers: [this._notifParDefaut()], message: null },
       avance: false, sequence: [],
     };
   }
@@ -325,7 +353,7 @@ class ProtocoleAlarmePanel extends HTMLElement {
       case "notif":
         r.evenement = "desarmement";
         r.nom = nom;
-        r.actions = [{ type: "notification", service: this._notifParDefaut(), action: "envoyer", params: { message: this.t("notif_defaut"), titre: "" } }];
+        r.actions = [{ type: "notification", services: [this._notifParDefaut()], action: "envoyer", params: { message: this.t("notif_defaut"), titre: "" } }];
         break;
       default: break;
     }
@@ -334,7 +362,12 @@ class ProtocoleAlarmePanel extends HTMLElement {
 
   _ouvrirAssistant(regle) {
     if (!regle.verification) regle.verification = this._regleVide().verification;
-    if (!regle.verification.notifier && regle.verification.notifier !== null) regle.verification.notifier = this._notifParDefaut();
+    const v = regle.verification;
+    if (!Array.isArray(v.notifiers)) v.notifiers = v.notifier ? [v.notifier] : regle.id ? [] : [this._notifParDefaut()];
+    delete v.notifier;
+    for (const a of regle.actions || []) {
+      if (a.type === "notification" && !a.services) { a.services = a.service ? [a.service] : [this._notifParDefaut()]; delete a.service; }
+    }
     this._brouillon = regle;
     this._siCond = (regle.conditions || []).length > 0;
     this._yaml = "";
@@ -489,6 +522,11 @@ class ProtocoleAlarmePanel extends HTMLElement {
       const ancienne = sel.index !== null ? b.conditions[sel.index] : null;
       const etat = ancienne && etats.includes(ancienne.etat) ? ancienne.etat : etats[0] || "";
       const cond = { entity_id: valeur, etat };
+      const v = b.verification;
+      if (ancienne?.entity_id && v.entity_id === ancienne.entity_id) {
+        v.entity_id = valeur;
+        if (!etats.includes(v.etat)) v.etat = etats.find((e) => e !== etat) || null;
+      }
       if (sel.index === null) b.conditions.push(cond); else b.conditions[sel.index] = cond;
       this._siCond = true;
     } else if (sel.cible === "verif") {
@@ -498,7 +536,7 @@ class ProtocoleAlarmePanel extends HTMLElement {
     } else {
       let action;
       if (valeur === "@simulateur") action = { type: "simulateur", action: "demarrer", params: {} };
-      else if (valeur === "@notification") action = { type: "notification", service: this._notifParDefaut(), action: "envoyer", params: { message: this.t("notif_defaut"), titre: "" } };
+      else if (valeur === "@notification") action = { type: "notification", services: [this._notifParDefaut()], action: "envoyer", params: { message: this.t("notif_defaut"), titre: "" } };
       else {
         const actions = Object.keys(this._d.catalogue[domaineDe(valeur)] || {});
         const ancienne = sel.index !== null ? b.actions[sel.index] : null;
@@ -557,8 +595,17 @@ class ProtocoleAlarmePanel extends HTMLElement {
   _interrupteur(on, attrs, label) {
     return `<button type="button" class="sw ${on ? "on" : ""}" role="switch" aria-checked="${on}" aria-label="${esc(label)}" ${attrs} ${this._admin ? "" : "disabled"}><span></span></button>`;
   }
-  _pastilleIcone(domaine) {
-    return `<span class="ic ${COULEURS[domaine] || "gris"}"><ha-icon icon="${ICONES[domaine] || "mdi:shape"}"></ha-icon></span>`;
+  _pastilleIcone(domaine, entityId) {
+    const s = entityId ? this._hass?.states?.[entityId] : null;
+    const classe = s?.attributes?.device_class;
+    const icone = s?.attributes?.icon || ICONES_CLASSE[classe] || ICONES[domaine] || "mdi:shape";
+    return `<span class="ic ${COULEURS[domaine] || "gris"}"><ha-icon icon="${icone}"></ha-icon></span>`;
+  }
+  _type(entityId) {
+    const s = this._hass?.states?.[entityId];
+    const d = domaineDe(entityId);
+    const classe = s?.attributes?.device_class;
+    return TYPES[this._langue].classe[classe] || TYPES[this._langue].domaine[d] || d;
   }
 
   // ---- onglet Règles
@@ -685,9 +732,10 @@ class ProtocoleAlarmePanel extends HTMLElement {
         <ha-icon icon="mdi:chevron-right"></ha-icon></button>`;
     }
     const s = this._hass.states[entityId];
-    return `<button type="button" class="entite-btn" ${attrs}>${this._pastilleIcone(domaineDe(entityId))}
+    return `<button type="button" class="entite-btn" ${attrs}>${this._pastilleIcone(domaineDe(entityId), entityId)}
       <span class="noms"><span class="nom">${esc(this._nomEntite(entityId))}</span>
-      <span class="sous">${esc(entityId)}${s ? ` · ${esc(this._etatLisible(entityId, s.state))}` : ""}</span></span>
+      <span class="type"><span class="tag-type">${esc(this._type(entityId))}</span>${s ? `<span>${esc(this._etatLisible(entityId, s.state))}</span>` : ""}</span>
+      <span class="id">${esc(entityId)}</span></span>
       <ha-icon icon="mdi:chevron-right"></ha-icon></button>`;
   }
 
@@ -763,8 +811,7 @@ class ProtocoleAlarmePanel extends HTMLElement {
     if (a.type === "notification") {
       const services = this._d.notifications || [];
       return `<div class="carte bloc">${tete}
-        <label class="champ"><span>${this.t("service_notif")}</span><select data-f="service" data-i="${i}">
-          ${services.map((s) => `<option value="${esc(s)}" ${s === a.service ? "selected" : ""}>${esc(this._nomService(s))}</option>`).join("")}</select></label>
+        <span class="etiquette">${this.t("service_notif")}</span>${this._choixServices(a.services || [], "notif-service", i)}
         <label class="champ"><span>${this.t("titre_notif")}</span><input type="text" data-f="titre" data-i="${i}" value="${esc(a.params.titre || "")}"></label>
         <label class="champ"><span>${this.t("message")}</span><textarea rows="2" data-f="message" data-i="${i}">${esc(a.params.message || "")}</textarea></label>
       </div>`;
@@ -802,9 +849,8 @@ class ProtocoleAlarmePanel extends HTMLElement {
             <label class="champ court"><span>${this.t("apres")} (s)</span><input type="number" min="0" max="3600" value="${v.delai_s}" data-f="verif-delai"></label>
             ${this._boutonEntite(v.entity_id, `data-a="verif-entite"`)}
             ${v.entity_id ? `<span class="etiquette">${this.t("doit_etre")}</span>${this._choixEtats(v.entity_id, v.etat, "verif-etat", 0, "verif-etat-libre")}` : ""}
-            <label class="champ"><span>${this.t("sinon_prevenir")}</span><select data-f="verif-notifier">
-              <option value="" ${!v.notifier ? "selected" : ""}>${this.t("personne")}</option>
-              ${services.map((s) => `<option value="${esc(s)}" ${s === v.notifier ? "selected" : ""}>${esc(this._nomService(s))}</option>`).join("")}</select></label>
+            <span class="etiquette">${this.t("sinon_prevenir")}</span>${this._choixServices(v.notifiers || [], "verif-notif", 0)}
+            <p class="sous">${this.t("plusieurs_destinataires")}</p>
           </div>
           <p class="sous">${this.t("verif_note")}</p>` : ""}
       </div>`;
@@ -842,7 +888,7 @@ class ProtocoleAlarmePanel extends HTMLElement {
         ${ligne(this.t("etape_quand").toUpperCase(), `${this.t(b.evenement === "armement" ? "a_larmement" : "au_desarmement")} · <b>${esc(this._modesTexte(b))}</b>`)}
         ${ligne(this.t("etape_si").toUpperCase(), conds)}
         ${ligne(this.t("etape_alors").toUpperCase(), actions + (b.delai_s ? `<br><span class="sous">${this.t("delai_avant")} : ${b.delai_s} s</span>` : ""))}
-        ${v.active ? ligne(this.t("verifier_resultat").split(" ")[0].toUpperCase(), `${this.t("apres")} ${v.delai_s} s, <b>${esc(this._nomEntite(v.entity_id))}</b> ${this.t("doit_etre")} <i>${esc(this._etatLisible(v.entity_id, v.etat))}</i>${v.notifier ? `, ${this.t("sinon_prevenir")} ${esc(this._nomService(v.notifier))}` : ""}`) : ""}
+        ${v.active ? ligne(this.t("verifier_resultat").split(" ")[0].toUpperCase(), `${this.t("apres")} ${v.delai_s} s, <b>${esc(this._nomEntite(v.entity_id))}</b> ${this.t("doit_etre")} <i>${esc(this._etatLisible(v.entity_id, v.etat))}</i>${(v.notifiers || []).length ? `, ${this.t("sinon_prevenir")} ${esc(v.notifiers.map((x) => this._nomService(x)).join(", "))}` : ""}`) : ""}
       </div>
       <button type="button" class="btn grand contour" data-a="tester-brouillon"><ha-icon icon="mdi:play"></ha-icon>${this.t("tester_maintenant")}</button>
       <p class="sous centre">${this.t("tester_note")}</p>
@@ -870,9 +916,10 @@ class ProtocoleAlarmePanel extends HTMLElement {
     if (!entites.length) return `<p class="sous centre">${this.t("aucune_entite")}</p>`;
     return entites.map((s) => `
       <button type="button" class="ligne-entite" data-a="choisir" data-v="${esc(s.entity_id)}">
-        ${this._pastilleIcone(domaineDe(s.entity_id))}
+        ${this._pastilleIcone(domaineDe(s.entity_id), s.entity_id)}
         <span class="noms"><span class="nom">${esc(s.attributes.friendly_name || s.entity_id)}</span>
-        <span class="sous">${esc(s.entity_id)} · ${esc(this._etatLisible(s.entity_id, s.state))}</span></span></button>`).join("");
+        <span class="type"><span class="tag-type">${esc(this._type(s.entity_id))}</span><span>${esc(this._etatLisible(s.entity_id, s.state))}</span></span>
+        <span class="id">${esc(s.entity_id)}</span></span></button>`).join("");
   }
 
   _selecteurHtml() {
@@ -880,7 +927,7 @@ class ProtocoleAlarmePanel extends HTMLElement {
     const action = sel.cible === "action";
     const catalogue = this._d.catalogue || {};
     const presents = new Set(Object.keys(this._hass.states).map(domaineDe));
-    const domaines = (action ? Object.keys(catalogue) : ["binary_sensor", "cover", "lock", "light", "switch", "person", "climate", "sensor"]).filter((d) => presents.has(d));
+    const domaines = (action ? Object.keys(catalogue) : ["binary_sensor", "cover", "lock", "light", "switch", "person", "device_tracker", "climate", "sensor", "input_boolean", "media_player"]).filter((d) => presents.has(d));
     const ls = this._d.simulateur;
     const speciaux = action && sel.index === null || (action && ["simulateur", "notification"].includes(this._brouillon.actions[sel.index]?.type))
       ? `
@@ -1003,6 +1050,10 @@ const STYLE = `
   .seg button { min-height: 44px; border: 0; border-radius: 9px; background: transparent; color: inherit; font: inherit; font-size: 14px; font-weight: 500; display: flex; align-items: center; justify-content: center; gap: 6px; cursor: pointer; }
   .seg button.on { background: var(--carte); color: var(--bleu); box-shadow: 0 1px 2px rgba(0,0,0,.12); }
   .tete { display: flex; align-items: center; gap: 12px; } .noms { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; text-align: left; }
+  .noms .sous, .noms .nom, .noms .id { overflow-wrap: anywhere; }
+  .noms .type { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: 13px; color: var(--primary-text-color, #1c1c1e); }
+  .tag-type { font-size: 12px; font-weight: 700; color: var(--bleu); background: color-mix(in srgb, var(--bleu) 10%, transparent); border-radius: 999px; padding: 2px 8px; }
+  .noms .id { font-size: 12px; color: var(--gris); } .entite-btn > ha-icon { flex: none; }
   .nom { font-size: 16px; font-weight: 500; } .nom.grand { font-size: 19px; font-weight: 700; }
   .ic { width: 40px; height: 40px; flex: none; border-radius: 12px; display: inline-flex; align-items: center; justify-content: center; }
   .ic.gris { background: #eef0f3; color: #3c4043; } .ic.bleu { background: #e6f0fb; color: #0b4f96; } .ic.jaune { background: #fff6d6; color: #7a5a00; }
@@ -1062,9 +1113,9 @@ const STYLE = `
   .voile { position: fixed; inset: 0; background: rgba(0,0,0,.4); display: flex; justify-content: center; align-items: flex-end; z-index: 10; }
   @media (min-width: 700px) { .voile { align-items: center; } .feuille { border-radius: 18px !important; } }
   .feuille { width: min(620px, 100%); max-height: 92vh; background: var(--primary-background-color, #f4f5f7); border-radius: 18px 18px 0 0; padding: 12px 16px 16px; display: flex; flex-direction: column; gap: 10px; }
-  .recherche { display: flex; align-items: center; gap: 8px; border: 1px solid #c9ced6; border-radius: 12px; padding: 0 12px; background: var(--carte); }
+  .recherche { flex: none; display: flex; align-items: center; gap: 8px; border: 1px solid #c9ced6; border-radius: 12px; padding: 0 12px; background: var(--carte); }
   .recherche input { border: 0; padding: 0; min-height: 46px; } .recherche input:focus { outline: none; }
-  .defile-h { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 2px; } .defile-v { overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+  .defile-h { flex-wrap: nowrap; overflow-x: auto; padding: 2px 0; flex: none; } .defile-h .chip { flex: none; } .feuille > .entete-vue, .recherche { flex: none; } .defile-v { overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
   #liste-entites { display: flex; flex-direction: column; background: var(--carte); border-radius: 14px; border: 1px solid var(--trait); }
   .ligne-entite { min-height: 60px; border: 0; border-bottom: 1px solid var(--trait); background: transparent; padding: 8px 14px; display: flex; align-items: center; gap: 12px; color: inherit; font: inherit; cursor: pointer; width: 100%; text-align: left; }
   .ligne-entite .ic { width: 36px; height: 36px; border-radius: 10px; } .ligne-entite.speciale { background: var(--carte); border: 1px solid var(--trait); border-radius: 14px; }

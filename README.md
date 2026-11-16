@@ -23,7 +23,9 @@ Protocole Alarme lance des actions quand vous **armez** ou **désarmez** votre a
 
 - **Assistant en 3 étapes** : *Quand* (armement ou désarmement, modes d'alarme), *Si* (conditions facultatives sur l'état d'entités), *Alors* (actions), puis un récapitulatif lisible.
 - **Actions paramétrables selon le type d'entité** : volets (ouvrir, fermer, position), lumières (allumer avec luminosité, éteindre), interrupteurs (allumer, éteindre, **impulsion** de durée réglable), serrures, chauffage (préréglage, température), médias, scènes, scripts, automatisations, listes, vannes, boutons et notifications.
-- **Vérification du résultat** : après un délai, contrôle qu'une entité est dans l'état attendu (ex. garage fermé) ; sinon notification et capteur « Échec de vérification ». Pas de nouvel essai automatique.
+- **Vérification du résultat** : après un délai, contrôle qu'une entité est dans l'état attendu (ex. garage fermé) ; sinon notification à **une ou plusieurs personnes** et capteur « Échec de vérification ». Pas de nouvel essai automatique.
+- **Notifications vers plusieurs destinataires** : une même action peut prévenir plusieurs téléphones (et/ou Home Assistant).
+- **Choix d'entité lisible** : recherche, filtres par type, et pour chaque entité son type (Fenêtre, Porte de garage, Mouvement…), son état et son icône.
 - **Délai avant exécution** par règle.
 - **Annulation** : désarmer l'alarme interrompt les règles d'armement encore en cours (délai, impulsion, vérification), et inversement.
 - **Redémarrage de Home Assistant** : ne déclenche aucune règle.
@@ -71,7 +73,8 @@ Le bouton **Configurer** de l'intégration permet de changer d'alarme et d'affic
 | **Règles** — armement et désarmement<br>![Règles](docs/screenshots/regles.png) | **Modèles** — points de départ<br>![Modèles](docs/screenshots/modeles.png) |
 | **Étape 1 — Quand ?**<br>![Quand](docs/screenshots/etape1.png) | **Étape 2 — Si…**<br>![Si](docs/screenshots/etape2.png) |
 | **Étape 3 — Alors…** — impulsion et vérification<br>![Alors](docs/screenshots/etape3.png) | **Récapitulatif**<br>![Récapitulatif](docs/screenshots/recap.png) |
-| **Choix de l'action** — Lights Simulator non installé<br>![Sélecteur](docs/screenshots/selecteur_simulateur.png) | **Mode avancé** — YAML<br>![Avancé](docs/screenshots/avance.png) |
+| **Choix de l'entité** — type, état, filtres<br>![Choix de l'entité](docs/screenshots/selecteur_condition.png) | **Choix de l'action** — Lights Simulator non installé<br>![Sélecteur](docs/screenshots/selecteur_simulateur.png) |
+| **Mode avancé** — YAML<br>![Avancé](docs/screenshots/avance.png) | **Réglages**<br>![Réglages](docs/screenshots/reglages.png) |
 | **Journal**<br>![Journal](docs/screenshots/journal.png) | **Entités**<br>![Entités](docs/screenshots/entites.png) |
 
 *Captures réalisées sur une installation de démonstration : toutes les entités sont fictives.*
@@ -110,7 +113,9 @@ Protocole Alarme runs actions when you **arm** or **disarm** your Home Assistant
 
 - **3-step wizard**: *When* (arming or disarming, alarm modes), *If* (optional conditions on entity states), *Then* (actions), followed by a readable summary.
 - **Actions with settings by entity type**: covers (open, close, position), lights (turn on with brightness, turn off), switches (on, off, **pulse** with adjustable length), locks, climate (preset, temperature), media, scenes, scripts, automations, selects, valves, buttons and notifications.
-- **Result check**: after a delay, checks an entity is in the expected state (e.g. garage closed); otherwise a notification and a “Check failed” sensor. No automatic retry.
+- **Result check**: after a delay, checks an entity is in the expected state (e.g. garage closed); otherwise a notification to **one or more people** and a “Check failed” sensor. No automatic retry.
+- **Notifications to several recipients**: one action can notify several phones (and/or Home Assistant).
+- **Readable entity picker**: search, type filters, and for each entity its type (Window, Garage door, Motion…), state and icon.
 - **Delay before running** per rule.
 - **Cancellation**: disarming stops arming rules still in progress (delay, pulse, check), and the other way round.
 - **Home Assistant restart**: never triggers a rule.

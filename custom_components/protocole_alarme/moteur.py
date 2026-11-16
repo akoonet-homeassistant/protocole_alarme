@@ -221,19 +221,22 @@ class Moteur:
             desabonner()
 
     async def _prevenir(self, regle: dict, verif: dict, actuel: str | None) -> None:
-        cible = verif.get("notifier")
-        if not cible:
+        cibles = R.services_notification(verif.get("notifiers") or [], verif.get("notifier"))
+        if not cibles:
             return
         message = verif.get("message") or self._message_echec(regle, verif, actuel)
         titre = NOM_APPAREIL
-        try:
-            if cible == "persistent_notification":
-                persistent_notification.async_create(self.hass, message, titre)
-            else:
-                domaine, service = cible.split(".", 1)
-                await self.hass.services.async_call(domaine, service, {"message": message, "title": titre}, blocking=True)
-        except (HomeAssistantError, ValueError, vol.Invalid) as err:
-            _LOGGER.warning("Notification « %s » impossible : %s", cible, err)
+        for cible in cibles:
+            try:
+                if cible == "persistent_notification":
+                    persistent_notification.async_create(self.hass, message, titre)
+                else:
+                    domaine, service = cible.split(".", 1)
+                    await self.hass.services.async_call(
+                        domaine, service, {"message": message, "title": titre}, blocking=True
+                    )
+            except (HomeAssistantError, ValueError, vol.Invalid) as err:
+                _LOGGER.warning("Notification « %s » impossible : %s", cible, err)
 
     def _message_echec(self, regle: dict, verif: dict, actuel: str | None) -> str:
         langue = "fr" if str(self.hass.config.language or "").startswith("fr") else "en"

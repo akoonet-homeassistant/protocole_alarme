@@ -126,6 +126,7 @@ SCHEMA_VERIFICATION = vol.Schema(
         vol.Optional("entity_id"): vol.Any(None, _entity_id),
         vol.Optional("etat"): vol.Any(None, _texte(100, obligatoire=False)),
         vol.Optional("notifier"): vol.Any(None, _texte(120, obligatoire=False)),
+        vol.Optional("notifiers", default=list): [_texte(120)],
         vol.Optional("message"): vol.Any(None, _texte(500, obligatoire=False)),
     },
     extra=vol.REMOVE_EXTRA,
@@ -149,6 +150,23 @@ SCHEMA_REGLE = vol.Schema(
 )
 
 
+def _service_notification(valeur: Any) -> str:
+    service = _texte(120)(valeur)
+    if service != "persistent_notification" and not service.startswith("notify."):
+        raise vol.Invalid("notification_invalide")
+    return service
+
+
+def services_notification(*sources: Any) -> list[str]:
+    """Liste sans doublon des destinataires (ancien champ unique ou nouvelle liste)."""
+    services: list[str] = []
+    for source in sources:
+        for valeur in source if isinstance(source, list) else [source]:
+            if valeur and valeur not in services:
+                services.append(_service_notification(valeur))
+    return services
+
+
 def normaliser_action(brute: dict) -> dict:
     """Vérifie une action du mode simple et ne garde que les paramètres utiles."""
     if not isinstance(brute, dict):
@@ -165,12 +183,12 @@ def normaliser_action(brute: dict) -> dict:
         return {"type": TYPE_SIMULATEUR, "action": nom_action, "params": {}}
 
     if type_action == TYPE_NOTIFICATION:
-        service = _texte(120)(brute.get("service"))
-        if service != "persistent_notification" and not service.startswith("notify."):
+        services = services_notification(brute.get("services") or [], brute.get("service"))
+        if not services:
             raise vol.Invalid("notification_invalide")
         return {
             "type": TYPE_NOTIFICATION,
-            "service": service,
+            "services": services,
             "action": "envoyer",
             "params": {
                 "message": _texte(500)(params_bruts.get("message")),
@@ -221,6 +239,8 @@ def normaliser(brute: dict) -> dict:
         if not regle["actions"]:
             raise vol.Invalid("action_requise")
     verif = regle["verification"]
+    if verif:
+        verif["notifiers"] = services_notification(verif.get("notifiers") or [], verif.pop("notifier", None))
     if verif and verif["active"] and not (verif.get("entity_id") and verif.get("etat")):
         raise vol.Invalid("verification_incomplete")
     return regle
@@ -263,8 +283,15 @@ def _etapes_action(action: dict, entite_ls: str | None, options_ls: list | None)
         donnees = {"message": params["message"]}
         if params.get("titre"):
             donnees["title"] = params["titre"]
-        service = "persistent_notification.create" if action["service"] == "persistent_notification" else action["service"]
-        return [{"action": service, "data": donnees, "continue_on_error": True}]
+        services = action.get("services") or [action["service"]]
+        return [
+            {
+                "action": "persistent_notification.create" if service == "persistent_notification" else service,
+                "data": dict(donnees),
+                "continue_on_error": True,
+            }
+            for service in services
+        ]
 
     entity_id = action["entity_id"]
     domaine = _domaine(entity_id)
