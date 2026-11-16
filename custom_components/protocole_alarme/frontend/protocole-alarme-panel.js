@@ -53,6 +53,14 @@ class ProtocoleAlarmePanel extends HTMLElement {
     this._message = null;
     this._erreur = null;
     this._d = null;
+    // Propriétés posées par Home Assistant avant la définition de l'élément : on les rejoue sur les setters
+    for (const nom of ["hass", "narrow", "panel"]) {
+      if (Object.prototype.hasOwnProperty.call(this, nom)) {
+        const valeur = this[nom];
+        delete this[nom];
+        this[nom] = valeur;
+      }
+    }
   }
 
   // ------------------------------------------------------------------ Home Assistant
@@ -80,6 +88,7 @@ class ProtocoleAlarmePanel extends HTMLElement {
     clearInterval(this._minuterie);
     clearTimeout(this._minuterieMessage);
     clearTimeout(this._minuterieRecherche);
+    clearTimeout(this._minuterieEssai);
   }
 
   get _langue() {
@@ -101,10 +110,15 @@ class ProtocoleAlarmePanel extends HTMLElement {
     try {
       this._d = await this._ws("etat");
       this._erreur = null;
+      this._essais = 0;
     } catch (err) {
       this._erreur = err.message || String(err);
+      // Intégration en cours de rechargement : nouvel essai rapide
+      this._essais = (this._essais || 0) + 1;
+      clearTimeout(this._minuterieEssai);
+      if (this._essais <= 10) this._minuterieEssai = setTimeout(() => this._charger(true), 2000);
     }
-    if (silencieux && this._vue !== "liste") return;
+    if (silencieux && this._vue !== "liste" && this._d) return;
     const actif = this.shadowRoot.activeElement;
     if (silencieux && actif && ["INPUT", "SELECT", "TEXTAREA"].includes(actif.tagName)) return;
     this._dessiner();
@@ -601,12 +615,23 @@ class ProtocoleAlarmePanel extends HTMLElement {
   // ------------------------------------------------------------------ dessin
 
   _dessiner() {
+    try {
+      this._dessinerPage();
+    } catch (err) {
+      console.error("Protocole Alarme :", err);
+      this.shadowRoot.innerHTML = `<style>${STYLE}</style><main><div class="carte"><h2>Protocole Alarme</h2>
+        <p class="sous">${esc(this.t("erreur_affichage"))}</p><pre class="code">${esc(err && (err.stack || err.message) || err)}</pre>
+        <button type="button" class="btn" data-a="onglet" data-v="regles">${esc(this.t("retour"))}</button></div></main>`;
+    }
+  }
+
+  _dessinerPage() {
     if (!this.shadowRoot) return;
     this._dernierDessin = Date.now();
     const d = this._d;
     let contenu;
     if (this._erreur && !d) contenu = `<div class="carte"><p>${esc(this._erreur)}</p></div>`;
-    else if (!d) contenu = `<div class="carte"><p>…</p></div>`;
+    else if (!d) contenu = `<div class="carte"><p class="sous">${this._hass ? this.t("chargement") : "…"}</p></div>`;
     else if (this._vue === "assistant") contenu = this._assistant();
     else if (this._vue === "modeles") contenu = this._modeles();
     else contenu = { regles: () => this._regles(), entites: () => this._entites(), journal: () => this._journal(), reglages: () => this._reglages() }[this._onglet]();
@@ -1305,6 +1330,7 @@ const STYLE = `
   .journal { list-style: none; margin: 0; padding: 0; } .entree { padding: 10px 0; border-top: 1px solid var(--trait); display: flex; flex-direction: column; gap: 4px; }
   .ligne-j { display: flex; justify-content: space-between; align-items: center; gap: 10px; } .ligne-j .nom { font-size: 15px; } .detail { font-style: italic; } .valeur-etat { font-size: 14px; white-space: nowrap; }
   .sous ha-icon.petite { vertical-align: -3px; }
+  pre.code { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; background: var(--secondary-background-color, #f4f5f7); padding: 10px; border-radius: 8px; }
   .ligne-reglage { display: flex; justify-content: space-between; align-items: center; gap: 12px; font-size: 15px; border-top: 1px solid var(--trait); padding-top: 6px; }
   @media (max-width: 420px) { .deux { gap: 8px; } .recap-ligne { grid-template-columns: 76px minmax(0, 1fr); } }
 `;

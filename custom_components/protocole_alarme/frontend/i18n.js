@@ -3,6 +3,7 @@
 export const TEXTES = {
   fr: {
     titre: "Protocole Alarme",
+    chargement: "Chargement des règles…", erreur_affichage: "Le panneau n'a pas pu s'afficher. Envoyez cette capture pour correction :",
     onglet_regles: "Règles", onglet_entites: "Entités", onglet_journal: "Journal", onglet_reglages: "Réglages",
     armement: "Armement", desarmement: "Désarmement", test: "Test", surveillance: "Pendant l'armement",
     surveiller: "Surveiller aussi pendant l'armement", surveiller_court: "Surveille aussi pendant l'armement",
@@ -101,6 +102,7 @@ export const TEXTES = {
   },
   en: {
     titre: "Protocole Alarme",
+    chargement: "Loading rules…", erreur_affichage: "The panel could not be displayed. Send this screenshot so it can be fixed:",
     onglet_regles: "Rules", onglet_entites: "Entities", onglet_journal: "Log", onglet_reglages: "Settings",
     armement: "Arming", desarmement: "Disarming", test: "Test", surveillance: "While armed",
     surveiller: "Also watch while armed", surveiller_court: "Also watches while armed",

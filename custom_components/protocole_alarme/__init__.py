@@ -54,10 +54,13 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if ok:
         moteur: Moteur = hass.data[DOMAIN].pop(entry.entry_id)
         await moteur.async_arreter()
-        async_retirer_panneau(hass)
+        # Le panneau reste enregistré : un rechargement (ajout ou suppression de règle) ne doit pas
+        # le retirer puis le recréer, ce qui laisse un panneau ouvert bloqué sur « … ».
+        # Il est retiré quand l'intégration est supprimée.
     return ok
 
 
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Suppression de l'intégration : efface les règles enregistrées."""
+    """Suppression de l'intégration : retire le panneau et efface les règles enregistrées."""
+    async_retirer_panneau(hass)
     await Store(hass, FORMAT_STOCKAGE, f"{DOMAIN}.{entry.entry_id}").async_remove()
