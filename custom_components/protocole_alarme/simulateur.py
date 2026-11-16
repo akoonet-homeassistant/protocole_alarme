@@ -38,7 +38,7 @@ def double_pilotage(hass: HomeAssistant) -> bool:
         moteur = next(iter((hass.data.get(LS_DOMAINE) or {}).values()), None)
         reglages = getattr(moteur, "reglages", None) or {}
         return getattr(moteur, "mode", None) == "auto" and reglages.get("declencheur") in ("alarme", "les_deux")
-    except Exception:  # noqa: BLE001 — données internes d'une autre intégration
+    except Exception:  # noqa: BLE001 — lecture prudente des données internes d'une autre intégration
         return False
 
 

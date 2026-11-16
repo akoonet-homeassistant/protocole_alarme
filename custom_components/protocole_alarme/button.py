@@ -26,4 +26,4 @@ class TesterRegle(EntiteRegle, ButtonEntity):
 
     async def async_press(self) -> None:
         if self.regle is not None:
-            await self.moteur.async_tester(self.regle)
+            await self.moteur.async_tester(self.regle, self._context)

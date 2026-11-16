@@ -25,6 +25,8 @@ Protocole Alarme lance des actions quand vous **armez** ou **désarmez** votre a
 - **Actions paramétrables selon le type d'entité** : volets (ouvrir, fermer, position), lumières (allumer avec luminosité, éteindre), interrupteurs (allumer, éteindre, **impulsion** de durée réglable), serrures, chauffage (préréglage, température), médias, scènes, scripts, automatisations, listes, vannes, boutons et notifications.
 - **Vérification du résultat** : après un délai, contrôle qu'une entité est dans l'état attendu (ex. garage fermé) ; sinon notification à **une ou plusieurs personnes** et capteur « Échec de vérification ». Pas de nouvel essai automatique.
 - **Notifications vers plusieurs destinataires** : une même action peut prévenir plusieurs téléphones (et/ou Home Assistant).
+- **Message d'échec modifiable** : le message par défaut est affiché et peut être personnalisé avec les variables `{{ regle }}`, `{{ entite }}`, `{{ etat_actuel }}`, `{{ etat_attendu }}`, avec un aperçu ; les états reprennent les libellés de Home Assistant.
+- **Personnes autorisées** : en plus des administrateurs, d'autres utilisateurs peuvent être autorisés à modifier les règles (onglet Réglages).
 - **Choix d'entité lisible** : recherche, filtres par type, et pour chaque entité son type (Fenêtre, Porte de garage, Mouvement…), son état et son icône.
 - **Délai avant exécution** par règle.
 - **Annulation** : désarmer l'alarme interrompt les règles d'armement encore en cours (délai, impulsion, vérification), et inversement.
@@ -34,7 +36,7 @@ Protocole Alarme lance des actions quand vous **armez** ou **désarmez** votre a
 - **Mode avancé** : une règle peut être modifiée en YAML (syntaxe des actions de script Home Assistant), avec les variables `regle`, `evenement` et `mode_alarme`.
 - **Bouton Tester** : exécute une règle sans armer l'alarme (les conditions restent vérifiées).
 - **Journal** des 50 dernières exécutions.
-- **Panneau latéral** « Protocole Alarme » consultable par tous ; création, modification et test réservés aux administrateurs.
+- **Panneau latéral** « Protocole Alarme » consultable par tous ; création, modification et test réservés aux administrateurs et aux personnes qu'ils autorisent.
 - **Interface en français et en anglais**, selon la langue de l'utilisateur.
 
 ### Installation
@@ -60,7 +62,7 @@ Ouvrez le panneau **Protocole Alarme** dans la barre latérale.
 | Règles | Règles d'armement et de désarmement, activation, test, modification, duplication, suppression ; ajout par l'assistant ou à partir d'un modèle |
 | Entités | Les entités créées, avec leur état |
 | Journal | Les dernières exécutions : règle, moment, résultat, détail |
-| Réglages | Alarme suivie, protocole actif ou en pause, état de Lights Simulator |
+| Réglages | Alarme suivie, protocole actif ou en pause, état de Lights Simulator, personnes autorisées à modifier les règles (administrateurs) |
 
 Le bouton **Configurer** de l'intégration permet de changer d'alarme et d'afficher ou masquer le panneau dans la barre latérale. Masqué, il reste accessible à l'adresse `/protocole-alarme`.
 
@@ -92,6 +94,16 @@ Le bouton **Configurer** de l'intégration permet de changer d'alarme et d'affic
 
 Les identifiants exacts dépendent de la langue de Home Assistant au moment de l'installation.
 
+### Sécurité
+
+- Création, modification, duplication, suppression et test des règles depuis le panneau : **administrateurs et personnes autorisées** par un administrateur (vérifié côté serveur). Les autres utilisateurs voient les règles en lecture seule.
+- Le **mode avancé** (script YAML libre) et la **liste des personnes autorisées** restent réservés aux administrateurs : un script libre peut appeler n'importe quel service. Une personne autorisée peut renommer, tester ou repasser en mode simple une règle avancée existante, sans modifier son script.
+- En mode simple, une règle ne peut appeler que les actions prévues pour chaque type d'entité et les services `notify.*` : pas d'appel de service arbitraire.
+- Le mode avancé exécute un script Home Assistant avec les mêmes droits qu'un script créé par un administrateur ; le YAML est lu en mode sûr et vérifié par Home Assistant avant enregistrement.
+- Les identifiants d'entité, de règle et de service sont contrôlés, les textes affichés sont échappés, les tailles sont limitées (100 règles, 100 étapes par script avancé, journal de 50 lignes).
+- Les actions lancées par un test sont rattachées à l'utilisateur qui l'a lancé, et celles lancées par l'alarme au changement d'état de l'alarme (journal de bord).
+- Comme toute entité Home Assistant, l'interrupteur « Protocole actif », les interrupteurs de règle et les boutons « Tester » peuvent être utilisés par tous les utilisateurs et par les assistants vocaux exposés ; limitez leur exposition si nécessaire.
+
 ### Limites
 
 - Une seule alarme suivie.
@@ -115,6 +127,8 @@ Protocole Alarme runs actions when you **arm** or **disarm** your Home Assistant
 - **Actions with settings by entity type**: covers (open, close, position), lights (turn on with brightness, turn off), switches (on, off, **pulse** with adjustable length), locks, climate (preset, temperature), media, scenes, scripts, automations, selects, valves, buttons and notifications.
 - **Result check**: after a delay, checks an entity is in the expected state (e.g. garage closed); otherwise a notification to **one or more people** and a “Check failed” sensor. No automatic retry.
 - **Notifications to several recipients**: one action can notify several phones (and/or Home Assistant).
+- **Editable failure message**: the default message is shown and can be customized with the `{{ regle }}`, `{{ entite }}`, `{{ etat_actuel }}`, `{{ etat_attendu }}` variables, with a preview; states use Home Assistant's labels.
+- **Allowed people**: besides administrators, other users can be allowed to change rules (Settings tab).
 - **Readable entity picker**: search, type filters, and for each entity its type (Window, Garage door, Motion…), state and icon.
 - **Delay before running** per rule.
 - **Cancellation**: disarming stops arming rules still in progress (delay, pulse, check), and the other way round.
@@ -124,7 +138,7 @@ Protocole Alarme runs actions when you **arm** or **disarm** your Home Assistant
 - **Advanced mode**: a rule can be edited in YAML (Home Assistant script action syntax), with the `regle`, `evenement` and `mode_alarme` variables.
 - **Test button**: runs a rule without arming the alarm (conditions are still checked).
 - **Log** of the last 50 runs.
-- **Sidebar panel** “Protocole Alarme” readable by everyone; creating, editing and testing are reserved to administrators.
+- **Sidebar panel** “Protocole Alarme” readable by everyone; creating, editing and testing are reserved to administrators and the people they allow.
 - **French and English interface**, following the user's language.
 
 ### Installation
@@ -150,7 +164,7 @@ Open the **Protocole Alarme** panel in the sidebar.
 | Rules | Arming and disarming rules, enable, test, edit, duplicate, delete; add with the wizard or from a template |
 | Entities | The created entities with their state |
 | Log | Latest runs: rule, moment, result, detail |
-| Settings | Followed alarm, protocol enabled or paused, Lights Simulator status |
+| Settings | Followed alarm, protocol enabled or paused, Lights Simulator status, people allowed to change rules (administrators) |
 
 The integration's **Configure** button changes the alarm and shows or hides the panel in the sidebar. When hidden, it stays reachable at `/protocole-alarme`.
 
@@ -172,6 +186,16 @@ The screenshots above (French interface) show every screen; the interface switch
 | `binary_sensor.protocole_alarme_check_failed` | Problem when the last check failed |
 
 Exact entity IDs depend on Home Assistant's language at installation time.
+
+### Security
+
+- Creating, editing, duplicating, deleting and testing rules from the panel: **administrators and people allowed** by an administrator (checked server-side). Other users see rules read-only.
+- **Advanced mode** (free YAML script) and the **list of allowed people** stay reserved to administrators: a free script can call any service. An allowed person can rename, test or switch back to simple mode an existing advanced rule, without changing its script.
+- In simple mode, a rule can only call the actions provided for each entity type and `notify.*` services: no arbitrary service call.
+- Advanced mode runs a Home Assistant script with the same rights as a script created by an administrator; the YAML is parsed safely and checked by Home Assistant before saving.
+- Entity, rule and service IDs are validated, displayed text is escaped, sizes are bounded (100 rules, 100 steps per advanced script, 50 log lines).
+- Actions started by a test are linked to the user who started it, and those started by the alarm to the alarm state change (logbook).
+- Like any Home Assistant entity, the “Protocol enabled” switch, rule switches and “Test” buttons can be used by every user and by exposed voice assistants; limit their exposure if needed.
 
 ### Limitations
 

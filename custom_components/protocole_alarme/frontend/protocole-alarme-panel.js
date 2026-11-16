@@ -73,10 +73,14 @@ class ProtocoleAlarmePanel extends HTMLElement {
       this.shadowRoot.addEventListener("input", (e) => this._saisie(e));
       this._ecoute = true;
     }
-    this._minuterie = setInterval(() => this._charger(true), 15000);
+    this._minuterie = setInterval(() => { if (!document.hidden) this._charger(true); }, 15000);
     this._dessiner();
   }
-  disconnectedCallback() { clearInterval(this._minuterie); }
+  disconnectedCallback() {
+    clearInterval(this._minuterie);
+    clearTimeout(this._minuterieMessage);
+    clearTimeout(this._minuterieRecherche);
+  }
 
   get _langue() {
     const l = (this._hass?.locale?.language || this._hass?.language || "en").toLowerCase();
@@ -88,6 +92,7 @@ class ProtocoleAlarmePanel extends HTMLElement {
     return texte;
   }
   get _admin() { return this._d ? this._d.admin : !!this._hass?.user?.is_admin; }
+  get _editeur() { return this._d ? !!this._d.peut_modifier : this._admin; }
 
   _ws(type, extra = {}) { return this._hass.callWS({ type: `${DOMAINE}/${type}`, ...extra }); }
 
@@ -113,7 +118,8 @@ class ProtocoleAlarmePanel extends HTMLElement {
   }
   _texteErreur(err) {
     const brut = err?.message || String(err);
-    const code = brut.split(":")[0];
+    const code = brut.split(":")[0].trim();
+    if (code === "avance_admin") return this.t("avance_admin");
     return TEXTES[this._langue][`err.${code}`] ? this.t(`err.${code}`) : brut;
   }
 
@@ -154,7 +160,7 @@ class ProtocoleAlarmePanel extends HTMLElement {
   _cible(action) {
     if (action.type === "simulateur") return this.t("simulateur");
     if (action.type === "notification") return esc(this._servicesDe(action).map((x) => this._nomService(x)).join(", "));
-    return action.entity_id ? this._nomEntite(action.entity_id) : `<em>${this.t("choisir_entite_manquante")}</em>`;
+    return action.entity_id ? this._nomEntite(action.entity_id) : this.t("choisir_entite_manquante");
   }
   _detailParams(action) {
     const p = action.params || {};
@@ -228,6 +234,7 @@ class ProtocoleAlarmePanel extends HTMLElement {
         case "verif": b.verification.active = !b.verification.active; this._completerVerif(); break;
         case "verif-entite": this._ouvrirSelecteur("verif", null); return;
         case "verif-etat": b.verification.etat = d.v; break;
+        case "verif-message-defaut": b.verification.message = null; break;
         case "verif-notif": {
           const l = b.verification.notifiers;
           b.verification.notifiers = l.includes(d.v) ? l.filter((x) => x !== d.v) : [...l, d.v];
@@ -247,6 +254,13 @@ class ProtocoleAlarmePanel extends HTMLElement {
         case "enregistrer": await this._enregistrer(); return;
         case "avance": await this._passerAvance(); return;
         case "simple": b.avance = false; b.sequence = []; this._yaml = ""; break;
+        case "editeur": {
+          const liste = new Set(this._d.editeurs || []);
+          if (liste.has(d.id)) liste.delete(d.id); else liste.add(d.id);
+          const res = await this._ws("editeurs", { editeurs: [...liste] });
+          this._d.editeurs = res.editeurs;
+          break;
+        }
         case "vider-journal": await this._ws("vider_journal"); await this._charger(); return;
         case "plus-info":
           this.dispatchEvent(new CustomEvent("hass-more-info", { detail: { entityId: d.id }, bubbles: true, composed: true }));
@@ -266,11 +280,20 @@ class ProtocoleAlarmePanel extends HTMLElement {
     const i = c.dataset.i !== undefined ? Number(c.dataset.i) : null;
     switch (c.dataset.f) {
       case "nom": b.nom = c.value; break;
-      case "recherche": this._selecteur.recherche = c.value; this._dessinerListe(); break;
+      case "recherche":
+        this._selecteur.recherche = c.value;
+        clearTimeout(this._minuterieRecherche);
+        this._minuterieRecherche = setTimeout(() => this._dessinerListe(), 120);
+        break;
       case "yaml": this._yaml = c.value; break;
       case "message": b.actions[i].params.message = c.value; break;
       case "titre": b.actions[i].params.titre = c.value; break;
-      case "verif-message": b.verification.message = c.value; break;
+      case "verif-message": {
+        b.verification.message = c.value.trim() === this._messageDefaut() ? null : c.value;
+        const apercu = this.shadowRoot.getElementById("apercu-message");
+        if (apercu) apercu.textContent = this._apercuMessage(b.verification);
+        break;
+      }
       case "param": {
         const action = b.actions[i];
         action.params[c.dataset.p] = c.type === "range" || c.type === "number" ? Number(c.value) : c.value;
@@ -298,9 +321,17 @@ class ProtocoleAlarmePanel extends HTMLElement {
   }
 
   async _attendreRechargement() {
-    // Ajouter ou supprimer une règle recharge l'intégration (entités par règle)
-    await new Promise((r) => setTimeout(r, 1200));
-    await this._charger();
+    // Ajouter ou supprimer une règle recharge l'intégration (entités par règle) : on relit jusqu'à ce que ce soit prêt
+    const avant = JSON.stringify((this._d?.regles || []).map((r) => r.id));
+    for (let essai = 0; essai < 8; essai += 1) {
+      await new Promise((r) => setTimeout(r, 400));
+      try {
+        const d = await this._ws("etat");
+        this._d = d;
+        if (JSON.stringify(d.regles.map((r) => r.id)) !== avant || essai >= 2) break;
+      } catch (err) { /* intégration en cours de rechargement */ }
+    }
+    this._dessiner();
   }
 
   // ------------------------------------------------------------------ règles et brouillon
@@ -325,7 +356,7 @@ class ProtocoleAlarmePanel extends HTMLElement {
     const action = (domaine, act, params = {}) => ({ type: "entite", entity_id: "", action: act, params, _domaine: domaine });
     switch (cle) {
       case "garage":
-        Object.assign(r, { nom: this.t("m_garage").split(" s")[0], modes: ["armed_away", "armed_night"] });
+        r.modes = ["armed_away", "armed_night"];
         r.nom = this._langue === "fr" ? "Fermer le garage" : "Close the garage";
         r.conditions = [{ entity_id: "", etat: "on", _domaine: "binary_sensor" }];
         r.actions = [action("switch", "impulsion", { duree: 1 })];
@@ -379,22 +410,23 @@ class ProtocoleAlarmePanel extends HTMLElement {
   }
 
   async _chargerYamlExistant() {
-    // Règle avancée existante : on réaffiche son script tel qu'enregistré
-    this._yaml = this._versYaml(this._brouillon.sequence);
+    // Règle déjà avancée : le serveur renvoie son script en YAML
+    try {
+      const res = await this._ws("vers_yaml", { regle: this._brouillonNettoye() });
+      this._yaml = res.yaml;
+    } catch (err) {
+      this._annoncer(this._texteErreur(err), true);
+    }
     this._dessiner();
-  }
-
-  _versYaml(sequence) {
-    // Affichage approximatif (JSON indenté accepté par le lecteur YAML) pour les règles déjà avancées
-    return JSON.stringify(sequence, null, 2);
   }
 
   _brouillonNettoye() {
     const b = copie(this._brouillon);
     if (!this._siCond) b.conditions = [];
     b.conditions = b.conditions.map(({ entity_id, etat }) => ({ entity_id, etat }));
-    b.actions = b.actions.map(({ _domaine, ...a }) => a);
+    b.actions = b.actions.map((a) => { const { _domaine: _ignore, ...reste } = a; return reste; });
     if (!b.verification?.active) b.verification = { ...b.verification, active: false };
+    if (b.verification && (!b.verification.message || b.verification.message.trim() === this._messageDefaut())) b.verification.message = null;
     return b;
   }
 
@@ -491,7 +523,11 @@ class ProtocoleAlarmePanel extends HTMLElement {
     const b = this._brouillon;
     if (cible === "condition" && index !== null) domaine = b.conditions[index]?._domaine || null;
     if (cible === "action" && index !== null) domaine = b.actions[index]?._domaine || null;
-    this._selecteur = { cible, index, recherche: "", domaine };
+    const tri = (s) => (s.attributes.friendly_name || s.entity_id).toLowerCase();
+    const base = Object.values(this._hass.states)
+      .map((s) => ({ s, cle: `${tri(s)} ${s.entity_id}`, nom: tri(s) }))
+      .sort((x, y) => x.nom.localeCompare(y.nom));
+    this._selecteur = { cible, index, recherche: "", domaine, base };
     this._dessiner();
     setTimeout(() => this.shadowRoot.getElementById("recherche")?.focus(), 50);
   }
@@ -500,18 +536,18 @@ class ProtocoleAlarmePanel extends HTMLElement {
     const sel = this._selecteur;
     const catalogue = this._d?.catalogue || {};
     const terme = (sel.recherche || "").toLowerCase().trim();
-    return Object.values(this._hass.states)
-      .filter((s) => {
-        const d = domaineDe(s.entity_id);
-        if (sel.cible === "action" && !catalogue[d]) return false;
-        if (s.entity_id.startsWith(`switch.${DOMAINE}`) || s.entity_id.startsWith(`button.${DOMAINE}`)) return false;
-        if (sel.cible === "action" && s.entity_id === this._d?.simulateur?.entite) return false;
-        if (sel.domaine && d !== sel.domaine) return false;
-        if (!terme) return true;
-        return `${s.attributes.friendly_name || ""} ${s.entity_id}`.toLowerCase().includes(terme);
-      })
-      .sort((a, b) => (a.attributes.friendly_name || a.entity_id).localeCompare(b.attributes.friendly_name || b.entity_id))
-      .slice(0, 150);
+    const exclues = new Set([this._d?.simulateur?.entite].filter(Boolean));
+    const resultat = [];
+    for (const { s, cle } of sel.base) {
+      const d = domaineDe(s.entity_id);
+      if (sel.cible === "action" && (!catalogue[d] || exclues.has(s.entity_id))) continue;
+      if (s.entity_id.startsWith(`switch.${DOMAINE}`) || s.entity_id.startsWith(`button.${DOMAINE}`)) continue;
+      if (sel.domaine && d !== sel.domaine) continue;
+      if (terme && !cle.includes(terme)) continue;
+      resultat.push(this._hass.states[s.entity_id] || s);
+      if (resultat.length >= 150) break;
+    }
+    return resultat;
   }
 
   _choisir(valeur) {
@@ -593,7 +629,7 @@ class ProtocoleAlarmePanel extends HTMLElement {
   }
 
   _interrupteur(on, attrs, label) {
-    return `<button type="button" class="sw ${on ? "on" : ""}" role="switch" aria-checked="${on}" aria-label="${esc(label)}" ${attrs} ${this._admin ? "" : "disabled"}><span></span></button>`;
+    return `<button type="button" class="sw ${on ? "on" : ""}" role="switch" aria-checked="${on}" aria-label="${esc(label)}" ${attrs} ${this._editeur ? "" : "disabled"}><span></span></button>`;
   }
   _pastilleIcone(domaine, entityId) {
     const s = entityId ? this._hass?.states?.[entityId] : null;
@@ -618,7 +654,7 @@ class ProtocoleAlarmePanel extends HTMLElement {
     const ls = d.simulateur;
     const utiliseLs = toutes.some((r) => r.actif && (r.actions || []).some((a) => a.type === "simulateur"));
     const avert = [];
-    if (!this._admin) avert.push(`<div class="bandeau">${this.t("lecture_seule")}</div>`);
+    if (!this._editeur) avert.push(`<div class="bandeau">${this.t("lecture_seule")}</div>`);
     if (!d.instantane.actif) avert.push(`<div class="bandeau orange">${this.t("protocole_pause")}</div>`);
     if (utiliseLs && ls.double_pilotage) avert.push(`<div class="bandeau orange">${this.t("ls_double")}</div>`);
     if (utiliseLs && ls.statut !== "pret") avert.push(`<div class="bandeau orange">${this.t("err.simulateur_absent")}</div>`);
@@ -630,7 +666,7 @@ class ProtocoleAlarmePanel extends HTMLElement {
           <ha-icon icon="${ICONE_EVENEMENT[ev]}"></ha-icon>${this.t(ev)} (${nb(ev)})</button>`).join("")}
       </div>
       <div class="pile">${cartes}</div>
-      ${this._admin ? `<div class="boutons-bas">
+      ${this._editeur ? `<div class="boutons-bas">
         <button type="button" class="btn primaire grand" data-a="nouvelle"><ha-icon icon="mdi:plus"></ha-icon>${this.t("ajouter_regle")}</button>
         <button type="button" class="btn grand" data-a="modeles"><ha-icon icon="mdi:view-grid-outline"></ha-icon>${this.t("partir_modele")}</button>
       </div>` : ""}`;
@@ -647,18 +683,18 @@ class ProtocoleAlarmePanel extends HTMLElement {
         <div class="tete">
           ${this._pastilleIcone(dom)}
           <div class="noms"><div class="nom">${esc(r.nom)}</div><div class="sous">${esc(this._modesTexte(r))}</div></div>
-          ${this._interrupteur(r.actif, `data-a="activer" data-id="${r.id}" data-v="${r.actif ? 1 : 0}"`, r.nom)}
+          ${this._interrupteur(r.actif, `data-a="activer" data-id="${esc(r.id)}" data-v="${r.actif ? 1 : 0}"`, r.nom)}
         </div>
         <div class="phrase">${this._phrase(r)}</div>
         ${verif}${delai}
-        ${this._admin ? `<div class="actions-carte">
-          <button type="button" class="lien" data-a="tester" data-id="${r.id}"><ha-icon icon="mdi:play"></ha-icon>${this.t("tester")}</button>
-          <button type="button" class="lien" data-a="modifier" data-id="${r.id}"><ha-icon icon="mdi:pencil"></ha-icon>${this.t("modifier")}</button>
+        ${this._editeur ? `<div class="actions-carte">
+          <button type="button" class="lien" data-a="tester" data-id="${esc(r.id)}"><ha-icon icon="mdi:play"></ha-icon>${this.t("tester")}</button>
+          <button type="button" class="lien" data-a="modifier" data-id="${esc(r.id)}"><ha-icon icon="mdi:pencil"></ha-icon>${this.t("modifier")}</button>
           <span class="espace"></span>
-          <button type="button" class="icone-btn bleu" data-a="dupliquer" data-id="${r.id}" aria-label="${this.t("dupliquer")}" title="${this.t("dupliquer")}"><ha-icon icon="mdi:content-copy"></ha-icon></button>
+          <button type="button" class="icone-btn bleu" data-a="dupliquer" data-id="${esc(r.id)}" aria-label="${this.t("dupliquer")}" title="${this.t("dupliquer")}"><ha-icon icon="mdi:content-copy"></ha-icon></button>
           ${confirmer
-            ? `<button type="button" class="lien danger" data-a="supprimer" data-id="${r.id}"><ha-icon icon="mdi:delete-outline"></ha-icon>${this.t("confirmer")}</button>`
-            : `<button type="button" class="icone-btn danger" data-a="supprimer" data-id="${r.id}" aria-label="${this.t("supprimer")}" title="${this.t("supprimer")}"><ha-icon icon="mdi:delete-outline"></ha-icon></button>`}
+            ? `<button type="button" class="lien danger" data-a="supprimer" data-id="${esc(r.id)}"><ha-icon icon="mdi:delete-outline"></ha-icon>${this.t("confirmer")}</button>`
+            : `<button type="button" class="icone-btn danger" data-a="supprimer" data-id="${esc(r.id)}" aria-label="${this.t("supprimer")}" title="${this.t("supprimer")}"><ha-icon icon="mdi:delete-outline"></ha-icon></button>`}
         </div>` : ""}
       </article>`;
   }
@@ -777,7 +813,7 @@ class ProtocoleAlarmePanel extends HTMLElement {
     const p = action.params || {};
     const curseur = (nom, min, max, pas, valeur, libelle) => `
       <div class="reglage">
-        <div class="ligne"><label for="p-${i}-${nom}">${this.t(libelle)}</label><output id="val-${i}-${nom}">${this._valeurParam(nom, valeur)}</output></div>
+        <div class="ligne"><label for="p-${i}-${nom}">${this.t(libelle)}</label><output id="val-${i}-${nom}">${esc(this._valeurParam(nom, valeur))}</output></div>
         <input id="p-${i}-${nom}" type="range" min="${min}" max="${max}" step="${pas}" value="${valeur ?? min}" data-f="param" data-p="${nom}" data-i="${i}">
       </div>`;
     const liste = (nom, options, libelle, vide) => `
@@ -809,7 +845,6 @@ class ProtocoleAlarmePanel extends HTMLElement {
       </div>`;
     }
     if (a.type === "notification") {
-      const services = this._d.notifications || [];
       return `<div class="carte bloc">${tete}
         <span class="etiquette">${this.t("service_notif")}</span>${this._choixServices(a.services || [], "notif-service", i)}
         <label class="champ"><span>${this.t("titre_notif")}</span><input type="text" data-f="titre" data-i="${i}" value="${esc(a.params.titre || "")}"></label>
@@ -831,14 +866,13 @@ class ProtocoleAlarmePanel extends HTMLElement {
         <h3 class="titre-etape">${this.t("alors_titre")}</h3>
         <div class="carte bloc">
           <span class="etiquette">${this.t("avance_titre")}</span>
-          <textarea class="code" rows="14" spellcheck="false" data-f="yaml" aria-label="${this.t("avance_titre")}">${esc(this._yaml)}</textarea>
-          <p class="sous">${esc(this.t("avance_note"))}</p>
+          <textarea class="code" rows="14" spellcheck="false" data-f="yaml" aria-label="${this.t("avance_titre")}" ${this._admin ? "" : "readonly"}>${esc(this._yaml)}</textarea>
+          <p class="sous">${esc(this.t(this._admin ? "avance_note" : "avance_admin"))}</p>
           <button type="button" class="lien" data-a="simple"><ha-icon icon="mdi:undo"></ha-icon>${this.t("mode_simple")}</button>
           <p class="sous">${this.t("mode_simple_note")}</p>
         </div>
         ${this._carteDelai()}`;
     }
-    const services = this._d.notifications || [];
     const verif = `
       <div class="carte bloc">
         <div class="tete"><span class="ic vert"><ha-icon icon="mdi:check-decagram-outline"></ha-icon></span>
@@ -851,6 +885,7 @@ class ProtocoleAlarmePanel extends HTMLElement {
             ${v.entity_id ? `<span class="etiquette">${this.t("doit_etre")}</span>${this._choixEtats(v.entity_id, v.etat, "verif-etat", 0, "verif-etat-libre")}` : ""}
             <span class="etiquette">${this.t("sinon_prevenir")}</span>${this._choixServices(v.notifiers || [], "verif-notif", 0)}
             <p class="sous">${this.t("plusieurs_destinataires")}</p>
+            ${(v.notifiers || []).length ? this._blocMessage(v) : ""}
           </div>
           <p class="sous">${this.t("verif_note")}</p>` : ""}
       </div>`;
@@ -860,6 +895,31 @@ class ProtocoleAlarmePanel extends HTMLElement {
       <button type="button" class="btn pointille" data-a="ajouter-action"><ha-icon icon="mdi:plus"></ha-icon>${this.t("ajouter_action")}</button>
       ${verif}
       ${this._carteDelai()}`;
+  }
+
+  _messageDefaut() { return this._d?.message_defaut || ""; }
+
+  _apercuMessage(v) {
+    const b = this._brouillon;
+    const autre = this._etatsPossibles(v.entity_id).find((e) => e !== v.etat) || "unknown";
+    const valeurs = {
+      regle: b.nom || this.t("nouvelle_regle"),
+      entite: this._nomEntite(v.entity_id),
+      etat_actuel: String(this._etatLisible(v.entity_id, autre)).toLowerCase(),
+      etat_attendu: String(this._etatLisible(v.entity_id, v.etat)).toLowerCase(),
+      evenement: "",
+    };
+    return (v.message ?? this._messageDefaut()).replace(/\{\{\s*(\w+)\s*\}\}/g, (tout, nom) => (nom in valeurs ? valeurs[nom] : tout));
+  }
+
+  _blocMessage(v) {
+    const perso = v.message !== null && v.message !== undefined && v.message !== this._messageDefaut();
+    return `
+      <label class="champ"><span>${this.t("message_envoye")}</span>
+        <textarea rows="3" data-f="verif-message">${esc(v.message ?? this._messageDefaut())}</textarea></label>
+      <p class="sous">${esc(this.t("message_variables"))}</p>
+      <div class="apercu"><span class="etiquette">${this.t("apercu")}</span><span id="apercu-message">${esc(this._apercuMessage(v))}</span></div>
+      ${perso ? `<button type="button" class="lien" data-a="verif-message-defaut"><ha-icon icon="mdi:restore"></ha-icon>${this.t("message_retablir")}</button>` : ""}`;
   }
 
   _carteDelai() {
@@ -892,7 +952,7 @@ class ProtocoleAlarmePanel extends HTMLElement {
       </div>
       <button type="button" class="btn grand contour" data-a="tester-brouillon"><ha-icon icon="mdi:play"></ha-icon>${this.t("tester_maintenant")}</button>
       <p class="sous centre">${this.t("tester_note")}</p>
-      ${b.avance ? "" : `<button type="button" class="lien centre" data-a="avance"><ha-icon icon="mdi:code-braces"></ha-icon>${this.t("mode_avance")}</button>`}`;
+      ${b.avance || !this._admin ? "" : `<button type="button" class="lien centre" data-a="avance"><ha-icon icon="mdi:code-braces"></ha-icon>${this.t("mode_avance")}</button>`}`;
   }
 
   // ---- sélecteur d'entité (feuille)
@@ -991,8 +1051,24 @@ class ProtocoleAlarmePanel extends HTMLElement {
       ${x.detail ? `<div class="sous detail">${esc(detail(x.detail))}</div>` : ""}</li>`).join("");
     return `<div class="carte">
       <div class="entete-carte"><h2>${this.t("onglet_journal")}</h2>
-        ${this._admin && j.length ? `<button type="button" class="btn" data-a="vider-journal">${this.t("vider_journal")}</button>` : ""}</div>
+        ${this._editeur && j.length ? `<button type="button" class="btn" data-a="vider-journal">${this.t("vider_journal")}</button>` : ""}</div>
       ${j.length ? `<ul class="journal">${lignes}</ul>` : `<p class="sous">${this.t("journal_vide")}</p>`}</div>`;
+  }
+
+  _carteEditeurs() {
+    const editeurs = new Set(this._d.editeurs || []);
+    const lignes = (this._d.utilisateurs || []).map((u) => `
+      <div class="ligne-reglage">
+        <span class="noms"><span class="nom">${esc(u.nom)}</span>${u.admin ? `<span class="sous">${this.t("administrateur")}</span>` : ""}</span>
+        ${u.admin
+          ? `<span class="badge vert">${this.t("toujours_autorise")}</span>`
+          : `<button type="button" class="sw ${editeurs.has(u.id) ? "on" : ""}" role="switch" aria-checked="${editeurs.has(u.id)}" aria-label="${esc(u.nom)}" data-a="editeur" data-id="${esc(u.id)}"><span></span></button>`}
+      </div>`).join("");
+    return `<div class="carte">
+      <h2>${this.t("editeurs_titre")}</h2>
+      <p class="sous">${this.t("editeurs_desc")}</p>
+      ${lignes}
+      <p class="sous"><ha-icon class="petite" icon="mdi:information-outline"></ha-icon> ${this.t("editeurs_note")}</p></div>`;
   }
 
   _reglages() {
@@ -1014,6 +1090,7 @@ class ProtocoleAlarmePanel extends HTMLElement {
              ${ls.double_pilotage ? `<p class="avert">${this.t("ls_double")}</p>` : ""}`
           : ""}
       </div>`}
+      ${this._admin ? this._carteEditeurs() : ""}
       <div class="carte"><h2>${this.t("version")}</h2><p class="sous">Protocole Alarme ${esc(d.version)}</p></div>
     </div>`;
   }
@@ -1107,6 +1184,7 @@ const STYLE = `
   .reglage .ligne { display: flex; justify-content: space-between; align-items: baseline; font-size: 14px; font-weight: 500; }
   .reglage output { font-weight: 700; color: var(--bleu); } input[type=range] { width: 100%; height: 32px; accent-color: var(--bleu); margin: 0; }
   .phrase-verif { display: flex; flex-direction: column; gap: 10px; }
+  .apercu { background: var(--secondary-background-color, #f4f5f7); border-radius: 12px; padding: 10px 12px; display: flex; flex-direction: column; gap: 4px; font-size: 14px; line-height: 1.45; }
   .ligne-delai { flex-direction: row; align-items: center; gap: 10px; padding: 6px 12px 6px 16px; } .ligne-delai .nom { flex: 1; font-size: 15px; font-weight: 400; }
   .ligne-delai .valeur { min-width: 52px; text-align: center; font-weight: 500; } .ligne-delai .icone-btn { color: var(--bleu); font-size: 22px; }
   .recap-ligne { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 10px; align-items: baseline; font-size: 15px; line-height: 1.5; padding-top: 12px; border-top: 1px solid var(--trait); }

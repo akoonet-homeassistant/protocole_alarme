@@ -16,7 +16,10 @@ from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_call_later, async_track_state_change_event
 from homeassistant.helpers.script import Script, async_validate_actions_config
+from homeassistant.exceptions import TemplateError
 from homeassistant.helpers.storage import Store
+from homeassistant.helpers.template import Template
+from homeassistant.helpers.translation import async_get_translations
 from homeassistant.util import dt as dt_util
 
 from . import regles as R
@@ -47,19 +50,11 @@ _LOGGER = logging.getLogger(__name__)
 
 EVT_TEST = "test"
 
-_ETATS_LISIBLES = {
-    "fr": {
-        "on": "activé", "off": "désactivé", "open": "ouvert", "closed": "fermé", "opening": "en ouverture",
-        "closing": "en fermeture", "locked": "verrouillé", "unlocked": "déverrouillé", "home": "présent",
-        "not_home": "absent", "unavailable": "indisponible", "unknown": "inconnu",
-    },
-    "en": {
-        "on": "on", "off": "off", "open": "open", "closed": "closed", "opening": "opening",
-        "closing": "closing", "locked": "locked", "unlocked": "unlocked", "home": "home",
-        "not_home": "away", "unavailable": "unavailable", "unknown": "unknown",
-    },
+# Message envoyé quand une vérification échoue (modifiable dans le panneau, même syntaxe)
+MESSAGE_ECHEC_DEFAUT = {
+    "fr": "⚠️ « {{ regle }} » : {{ entite }} est {{ etat_actuel }} au lieu de {{ etat_attendu }}.",
+    "en": "⚠️ “{{ regle }}”: {{ entite }} is {{ etat_actuel }} instead of {{ etat_attendu }}.",
 }
-_CLASSES_OUVERTURE = {"door", "garage_door", "window", "opening"}
 
 
 class Moteur:
@@ -71,6 +66,7 @@ class Moteur:
         self.store: Store = Store(hass, FORMAT_STOCKAGE, f"{DOMAIN}.{entry.entry_id}")
         self.regles: list[dict] = []
         self.actif: bool = True
+        self.editeurs: list[str] = []  # utilisateurs non administrateurs autorisés à modifier les règles
         self.journal: list[dict] = []
         self.dernier_mode: str | None = None
         self.derniere_execution: dict | None = None
@@ -88,6 +84,7 @@ class Moteur:
         donnees = await self.store.async_load() or {}
         self.regles = [r for r in donnees.get("regles", []) if isinstance(r, dict) and r.get("id")]
         self.actif = bool(donnees.get("actif", True))
+        self.editeurs = [str(u) for u in donnees.get("editeurs", []) if u]
         self.journal = list(donnees.get("journal", []))[:JOURNAL_MAX]
         self.dernier_mode = donnees.get("dernier_mode")
         self.derniere_execution = donnees.get("derniere_execution")
@@ -108,6 +105,7 @@ class Moteur:
         return {
             "regles": self.regles,
             "actif": self.actif,
+            "editeurs": self.editeurs,
             "journal": self.journal,
             "dernier_mode": self.dernier_mode,
             "derniere_execution": self.derniere_execution,
@@ -137,28 +135,28 @@ class Moteur:
         if not self.actif:
             self._noter(None, evenement, RES_PAUSE, "")
             return
-        self.async_lancer(evenement, self.dernier_mode)
+        self.async_lancer(evenement, self.dernier_mode, Context(parent_id=event.context.id))
 
     @callback
-    def async_lancer(self, evenement: str, mode: str | None) -> None:
+    def async_lancer(self, evenement: str, mode: str | None, contexte: Context | None = None) -> None:
         """Annule les règles de l'événement inverse encore en cours, puis lance les règles concernées."""
         inverse = EVT_DESARMEMENT if evenement == EVT_ARMEMENT else EVT_ARMEMENT
         for tache in list(self._taches[inverse]):
             tache.cancel()
         for regle in self.regles:
             if R.concerne(regle, evenement, mode):
-                self._demarrer_tache(copy.deepcopy(regle), evenement, mode)
+                self._demarrer_tache(copy.deepcopy(regle), evenement, mode, contexte)
 
-    def _demarrer_tache(self, regle: dict, evenement: str, mode: str | None) -> None:
+    def _demarrer_tache(self, regle: dict, evenement: str, mode: str | None, contexte: Context | None = None) -> None:
         tache = self.entry.async_create_background_task(
-            self.hass, self._executer(regle, evenement, mode), f"{DOMAIN} {regle['nom']}"
+            self.hass, self._executer(regle, evenement, mode, contexte or Context()), f"{DOMAIN} {regle['nom']}"
         )
         self._taches[evenement].add(tache)
         tache.add_done_callback(self._taches[evenement].discard)
 
     # ------------------------------------------------------------------ exécution
 
-    async def _executer(self, regle: dict, evenement: str, mode: str | None) -> None:
+    async def _executer(self, regle: dict, evenement: str, mode: str | None, contexte: Context) -> None:
         ok, detail = R.conditions_remplies(regle, self._etat)
         if not ok:
             self._noter(regle, evenement, RES_CONDITION, detail)
@@ -173,7 +171,7 @@ class Moteur:
                 script_mode="parallel", max_runs=10, logger=_LOGGER,
             )
             variables = {"regle": regle["nom"], "evenement": evenement, "mode_alarme": mode}
-            await script.async_run(run_variables=variables, context=Context())
+            await script.async_run(run_variables=variables, context=contexte)
         except asyncio.CancelledError:
             if script is not None:
                 await script.async_stop()
@@ -224,7 +222,7 @@ class Moteur:
         cibles = R.services_notification(verif.get("notifiers") or [], verif.get("notifier"))
         if not cibles:
             return
-        message = verif.get("message") or self._message_echec(regle, verif, actuel)
+        message = await self.async_message_echec(regle, verif, actuel)
         titre = NOM_APPAREIL
         for cible in cibles:
             try:
@@ -238,21 +236,46 @@ class Moteur:
             except (HomeAssistantError, ValueError, vol.Invalid) as err:
                 _LOGGER.warning("Notification « %s » impossible : %s", cible, err)
 
-    def _message_echec(self, regle: dict, verif: dict, actuel: str | None) -> str:
-        langue = "fr" if str(self.hass.config.language or "").startswith("fr") else "en"
-        etat = self.hass.states.get(verif["entity_id"])
-        nom = etat.name if etat else verif["entity_id"]
-        attendu = self._lisible(verif["entity_id"], verif["etat"], langue)
-        obtenu = self._lisible(verif["entity_id"], actuel, langue)
-        if langue == "fr":
-            return f"⚠️ « {regle['nom']} » : {nom} est {obtenu} au lieu de {attendu}."
-        return f"⚠️ “{regle['nom']}”: {nom} is {obtenu} instead of {attendu}."
+    @property
+    def langue(self) -> str:
+        return "fr" if str(self.hass.config.language or "").startswith("fr") else "en"
 
-    def _lisible(self, entity_id: str, valeur: str | None, langue: str) -> str:
+    async def async_message_echec(self, regle: dict, verif: dict, actuel: str | None) -> str:
+        """Message personnalisé (modèle Home Assistant) ou message par défaut dans la langue de HA."""
+        etat = self.hass.states.get(verif["entity_id"])
+        variables = {
+            "regle": regle["nom"],
+            "entite": etat.name if etat else verif["entity_id"],
+            "etat_actuel": await self._lisible(verif["entity_id"], actuel),
+            "etat_attendu": await self._lisible(verif["entity_id"], verif["etat"]),
+            "evenement": "",
+        }
+        defaut = MESSAGE_ECHEC_DEFAUT[self.langue]
+        for modele in (verif.get("message") or defaut, defaut):
+            try:
+                return str(Template(modele, self.hass).async_render(variables, parse_result=False)).strip()
+            except TemplateError as err:
+                _LOGGER.warning("Message de la règle « %s » invalide : %s", regle["nom"], err)
+        return defaut
+
+    async def _lisible(self, entity_id: str, valeur: str | None) -> str:
+        """État traduit comme dans Home Assistant (ex. « Ouvert » pour une porte de garage)."""
+        if valeur is None:
+            valeur = "unavailable"
+        domaine = entity_id.split(".", 1)[0]
         etat = self.hass.states.get(entity_id)
-        if entity_id.startswith("binary_sensor.") and etat and etat.attributes.get("device_class") in _CLASSES_OUVERTURE:
-            valeur = {"on": "open", "off": "closed"}.get(valeur or "", valeur)
-        return _ETATS_LISIBLES[langue].get(valeur or "unknown", valeur or "?")
+        classe = (etat.attributes.get("device_class") if etat else None) or "_"
+        try:
+            traductions = await async_get_translations(self.hass, self.hass.config.language, "entity_component", [domaine])
+        except HomeAssistantError:
+            traductions = {}
+        for cle in (
+            f"component.{domaine}.entity_component.{classe}.state.{valeur}",
+            f"component.{domaine}.entity_component._.state.{valeur}",
+        ):
+            if cle in traductions:
+                return traductions[cle].lower()
+        return valeur
 
     def _etat(self, entity_id: str) -> str | None:
         etat = self.hass.states.get(entity_id)
@@ -297,8 +320,17 @@ class Moteur:
         except (vol.Invalid, HomeAssistantError) as err:
             raise vol.Invalid(f"sequence_invalide: {err}") from err
 
+    def valider_message(self, regle: dict) -> None:
+        message = (regle.get("verification") or {}).get("message")
+        if message:
+            try:
+                Template(message, self.hass).ensure_valid()
+            except TemplateError as err:
+                raise vol.Invalid(f"message_invalide: {err}") from err
+
     async def async_enregistrer(self, brute: dict) -> dict:
         regle = R.normaliser(brute)
+        self.valider_message(regle)
         await self.async_valider_sequence(regle)
         existante = self.regle(regle["id"])
         recharger = existante is None or existante["nom"] != regle["nom"]
@@ -330,15 +362,27 @@ class Moteur:
             regle["actif"] = actif
             await self._appliquer(False)
 
+    def peut_modifier(self, utilisateur) -> bool:
+        """Administrateur, ou utilisateur ajouté à la liste des éditeurs."""
+        return bool(utilisateur and utilisateur.is_active and (utilisateur.is_admin or utilisateur.id in self.editeurs))
+
+    async def async_changer_editeurs(self, editeurs: list[str]) -> None:
+        self.editeurs = sorted(set(editeurs))
+        await self._appliquer(False)
+
     async def async_changer_actif(self, actif: bool) -> None:
         self.actif = actif
         await self._appliquer(False)
 
-    async def async_tester(self, brute: dict) -> None:
-        """Exécute une règle tout de suite, sans armer l'alarme. Les conditions restent vérifiées."""
+    async def async_tester(self, brute: dict, contexte: Context | None = None) -> None:
+        """Exécute une règle tout de suite, sans armer l'alarme. Les conditions restent vérifiées.
+
+        Le contexte relie les actions à l'utilisateur qui a lancé le test (journal de bord).
+        """
         regle = R.normaliser(brute)
+        self.valider_message(regle)
         await self.async_valider_sequence(regle)
-        self._demarrer_tache(regle, EVT_TEST, self.dernier_mode)
+        self._demarrer_tache(regle, EVT_TEST, self.dernier_mode, contexte)
 
     async def _appliquer(self, recharger: bool) -> None:
         await self.store.async_save(self._a_sauver())
@@ -349,6 +393,8 @@ class Moteur:
 
     def sequence_yaml(self, brute: dict) -> list[dict]:
         """Script équivalent à une règle simple, pour passer en mode avancé."""
+        if brute.get("avance") and brute.get("sequence"):
+            return R.normaliser(brute)["sequence"]
         regle = R.normaliser({**brute, "avance": False})
         entite_ls = simulateur.entite_mode(self.hass) or "select.lights_simulator_mode"
         return R.sequence_simple(regle, entite_ls, simulateur.options_mode(self.hass, entite_ls))

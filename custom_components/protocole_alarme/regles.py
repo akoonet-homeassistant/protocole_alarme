@@ -6,6 +6,7 @@ Ce module ne dépend pas de l'état de Home Assistant : il est testable seul.
 from __future__ import annotations
 
 import copy
+import re
 import uuid
 from typing import Any
 
@@ -70,6 +71,7 @@ PARAMETRES: dict[str, tuple[Any, str | None, bool]] = {
 }
 
 DUREE_IMPULSION_DEFAUT = 1.0
+SEQUENCE_MAX = 100  # étapes d'un script avancé
 
 
 class ErreurRegle(Exception):
@@ -93,10 +95,26 @@ def _domaine(entity_id: str) -> str:
     return entity_id.split(".", 1)[0]
 
 
+# Mêmes règles que Home Assistant : domaine.objet, minuscules, chiffres et « _ »
+_RE_ENTITE = re.compile(r"^(?!.+__)(?!_)[\da-z_]+(?<!_)\.(?!_)[\da-z_]+(?<!_)$")
+_RE_NOTIFY = re.compile(r"^notify\.[\da-z_]+$")
+_RE_ID = re.compile(r"^[\da-z]{1,32}$")
+
+
 def _entity_id(valeur: Any) -> str:
     valeur = str(valeur or "").strip().lower()
-    if "." not in valeur or valeur.startswith(".") or valeur.endswith(".") or " " in valeur:
+    if len(valeur) > 255 or not _RE_ENTITE.match(valeur):
         raise vol.Invalid("entite_invalide")
+    return valeur
+
+
+def _identifiant(valeur: Any) -> str | None:
+    """Identifiant de règle : uniquement lettres minuscules et chiffres (il finit dans le HTML du panneau)."""
+    if valeur in (None, ""):
+        return None
+    valeur = str(valeur)
+    if not _RE_ID.match(valeur):
+        raise vol.Invalid("regle_invalide")
     return valeur
 
 
@@ -134,7 +152,7 @@ SCHEMA_VERIFICATION = vol.Schema(
 
 SCHEMA_REGLE = vol.Schema(
     {
-        vol.Optional("id"): vol.Any(None, _texte(32, obligatoire=False)),
+        vol.Optional("id"): _identifiant,
         vol.Required("nom"): _texte(80),
         vol.Optional("actif", default=True): bool,
         vol.Required("evenement"): vol.In(EVENEMENTS),
@@ -144,7 +162,7 @@ SCHEMA_REGLE = vol.Schema(
         vol.Optional("delai_s", default=0): _secondes(3600),
         vol.Optional("verification", default=None): vol.Any(None, SCHEMA_VERIFICATION),
         vol.Optional("avance", default=False): bool,
-        vol.Optional("sequence", default=list): [dict],
+        vol.Optional("sequence", default=list): vol.All([dict], vol.Length(max=SEQUENCE_MAX)),
     },
     extra=vol.REMOVE_EXTRA,
 )
@@ -152,7 +170,7 @@ SCHEMA_REGLE = vol.Schema(
 
 def _service_notification(valeur: Any) -> str:
     service = _texte(120)(valeur)
-    if service != "persistent_notification" and not service.startswith("notify."):
+    if service != "persistent_notification" and not _RE_NOTIFY.match(service):
         raise vol.Invalid("notification_invalide")
     return service
 
@@ -228,7 +246,7 @@ def normaliser(brute: dict) -> dict:
     except vol.MultipleInvalid as err:
         premiere = err.errors[0]
         raise vol.Invalid(str(premiere.msg if premiere.msg in _CODES else "regle_invalide")) from err
-    regle["id"] = regle.get("id") or uuid.uuid4().hex[:8]
+    regle["id"] = regle.get("id") or uuid.uuid4().hex[:12]
     regle["modes"] = [m for m in ETATS_ARMES if m in set(regle["modes"])]
     regle["actions"] = [normaliser_action(a) for a in regle["actions"]]
     if regle["avance"]:
@@ -246,7 +264,7 @@ def normaliser(brute: dict) -> dict:
     return regle
 
 
-_CODES = {"texte_requis", "entite_invalide", "action_invalide", "action_inconnue"}
+_CODES = {"texte_requis", "entite_invalide", "action_invalide", "action_inconnue", "regle_invalide"}
 
 
 def sequence_simple(regle: dict, entite_ls: str | None = None, options_ls: list | None = None) -> list[dict]:
@@ -299,7 +317,7 @@ def _etapes_action(action: dict, entite_ls: str | None, options_ls: list | None)
         duree = float(action["params"].get("duree", DUREE_IMPULSION_DEFAUT))
         return [
             _appel(f"{domaine}.turn_on", entity_id),
-            {"delay": {"milliseconds": int(round(duree * 1000))}},
+            {"delay": {"milliseconds": round(duree * 1000)}},
             _appel(f"{domaine}.turn_off", entity_id),
         ]
     service, noms_params = CATALOGUE[domaine][action["action"]]
