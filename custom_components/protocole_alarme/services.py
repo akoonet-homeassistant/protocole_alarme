@@ -22,6 +22,7 @@ SCHEMA_IMPORTER = vol.Schema(
     {
         vol.Required("regles"): vol.All([dict], vol.Length(min=1, max=REGLES_MAX)),
         vol.Optional("remplacer", default=False): bool,
+        vol.Optional("types"): vol.All([dict], vol.Length(max=30)),
     }
 )
 
@@ -41,12 +42,12 @@ def async_enregistrer_services(hass: HomeAssistant) -> None:
 
     async def exporter(call: ServiceCall) -> ServiceResponse:
         moteur = _moteur(hass)
-        return {"version": VERSION, "regles": copy.deepcopy(moteur.regles)}
+        return {"version": VERSION, "types": copy.deepcopy(moteur.types), "regles": copy.deepcopy(moteur.regles)}
 
     async def importer(call: ServiceCall) -> ServiceResponse:
         moteur = _moteur(hass)
         try:
-            nouvelles = await moteur.async_importer(call.data["regles"], call.data["remplacer"])
+            nouvelles = await moteur.async_importer(call.data["regles"], call.data["remplacer"], call.data.get("types"))
         except vol.Invalid as err:
             raise ServiceValidationError(f"Règle refusée : {err.msg if hasattr(err, 'msg') else err}") from err
         return {"importees": len(nouvelles), "regles": [{"id": r["id"], "nom": r["nom"]} for r in nouvelles]}

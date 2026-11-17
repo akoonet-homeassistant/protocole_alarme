@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from homeassistant.components.frontend import add_extra_js_url
 from homeassistant.components.http import StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
@@ -12,7 +13,7 @@ from homeassistant.helpers.storage import Store
 
 from . import websocket
 from .services import async_enregistrer_services
-from .const import DOMAIN, FORMAT_STOCKAGE, STATIC_URL
+from .const import DOMAIN, FORMAT_STOCKAGE, STATIC_URL, VERSION
 from .moteur import Moteur
 from .panneau import async_installer_panneau, async_retirer_panneau
 
@@ -26,6 +27,8 @@ async def _preparer_frontend(hass: HomeAssistant) -> None:
         return
     dossier = Path(__file__).parent / "frontend"
     await hass.http.async_register_static_paths([StaticPathConfig(STATIC_URL, str(dossier), False)])
+    # Carte du tableau de bord : chargée sur toutes les pages, sans ressource Lovelace à ajouter
+    add_extra_js_url(hass, f"{STATIC_URL}/protocole-alarme-card.js?v={VERSION}")
     websocket.async_enregistrer(hass)
     async_enregistrer_services(hass)
     hass.data[CLE_FRONTEND] = True

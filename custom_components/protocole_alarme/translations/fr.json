@@ -73,6 +73,10 @@
         "remplacer": {
           "name": "Remplacer",
           "description": "Remplace toutes les règles existantes au lieu de les compléter."
+        },
+        "types": {
+          "name": "Types de règle",
+          "description": "Types de règle du fichier exporté ; ceux qui n'existent pas encore sont ajoutés."
         }
       }
     }

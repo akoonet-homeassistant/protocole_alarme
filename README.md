@@ -46,6 +46,8 @@ Protocole Alarme lance des actions quand vous **armez** ou **désarmez** votre a
 - **Journal** des 50 dernières exécutions.
 - **Import / export** des règles depuis le panneau (fichier JSON ou presse-papiers), en ajout ou en remplacement.
 - **Panneau latéral** « Protocole Alarme » consultable par tous ; création, modification et test réservés aux administrateurs et aux personnes qu'ils autorisent.
+- **Types de règles personnalisables** : ajout, renommage, icône, ordre et suppression dans Réglages ; les règles d'un type supprimé vont dans « Autres ». Dans la liste, chaque type se replie ou se déplie (mémorisé sur l'appareil).
+- **Carte du tableau de bord** « Protocole Alarme » : armer / désarmer (avec code si l'alarme le demande), bouclier vert quand l'alarme est désarmée et rouge quand elle est armée, règles exécutées depuis le dernier armement ou désarmement (en direct), capteurs en boutons ; listes repliables. Aucune ressource à ajouter.
 - **Interface en français et en anglais**, selon la langue de l'utilisateur.
 
 ### Installation
@@ -71,11 +73,32 @@ Ouvrez le panneau **Protocole Alarme** dans la barre latérale.
 | Règles | Règles d'armement et de désarmement, activation, test, modification, duplication, suppression ; ajout par l'assistant ou à partir d'un modèle |
 | Entités | Les entités créées, avec leur état |
 | Journal | Les dernières exécutions : règle, moment, résultat, détail |
-| Réglages | Alarme suivie, protocole actif ou en pause, état de Lights Simulator, import / export des règles, personnes autorisées à modifier les règles (administrateurs) |
+| Réglages | Alarme suivie, protocole actif ou en pause, état de Lights Simulator, types de règles, import / export des règles, personnes autorisées à modifier les règles (administrateurs) |
 
 Le bouton **Configurer** de l'intégration permet de changer d'alarme et d'afficher ou masquer le panneau dans la barre latérale. Masqué, il reste accessible à l'adresse `/protocole-alarme`.
 
 **Quand une règle s'exécute-t-elle ?** À l'armement, quand l'alarme passe de *désarmée* ou *en cours d'armement* à un état *armée* (absent, nuit, présent, vacances, personnalisé). Au désarmement, quand elle repasse à *désarmée* depuis un état armé, en attente ou déclenché. Pour le désarmement, le filtre de modes porte sur le mode dans lequel l'alarme était armée. Avec l'option « Surveiller aussi pendant l'armement », une règle d'armement s'exécute aussi quand l'une de ses conditions devient vraie alors que l'alarme est armée dans l'un de ses modes, après le délai après armement éventuel, et sauf si la condition était déjà vraie à l'armement et que l'option « Ignorer si c'est déjà le cas à l'armement » est cochée (avec « Tolérer seulement si… », tant que l'entité choisie reste dans l'état indiqué).
+
+### Carte du tableau de bord
+
+Modifier le tableau de bord → **Ajouter une carte** → **Protocole Alarme**. Tout se règle dans l'éditeur visuel ; en YAML :
+
+```yaml
+type: custom:protocole-alarme-card
+entity: alarm_control_panel.alarme_maison   # facultatif : alarme suivie par l'intégration par défaut
+nom: Alarme                                  # facultatif : titre
+modes:                                       # modes affichés (ceux que l'alarme ne gère pas sont ignorés)
+  - armed_away
+  - armed_night
+capteurs:                                    # boutons de capteurs
+  - binary_sensor.fenetre_salon
+  - binary_sensor.porte_garage
+afficher_regles: true                        # liste « Règles exécutées »
+afficher_capteurs: true                      # liste « Capteurs »
+afficher_panneau: true                       # bouton « Règles » vers le panneau (alarme désarmée)
+```
+
+Bouclier : vert (désarmée), rouge (armée), orange (armement, attente), rouge clignotant (alarme déclenchée), gris (indisponible). Les règles affichées sont celles qui ont réellement agi depuis le dernier armement ou désarmement, avec le résultat de leur vérification. Un appui sur le titre d'une liste la replie ; un appui sur un capteur ouvre sa fiche. Le bouton **Règles** ouvre le panneau Protocole Alarme ; il n'apparaît que lorsque l'alarme est désarmée.
 
 ### Captures d'écran
 
@@ -89,6 +112,7 @@ Le bouton **Configurer** de l'intégration permet de changer d'alarme et d'affic
 | **Journal**<br>![Journal](docs/screenshots/journal.png) | **Entités**<br>![Entités](docs/screenshots/entites.png) |
 | **Import / export**<br>![Import](docs/screenshots/import.png) | **Intrusion — Quand ?** — délai après armement, tolérer seulement si le volet est fermé<br>![Intrusion](docs/screenshots/intrusion.png) |
 | **Volet — Alors…** — actions en cas d'échec (déclencher l'alarme, prévenir)<br>![Actions en cas d'échec](docs/screenshots/actions_echec.png) | **Récapitulatif** — type de règle<br>![Type de règle](docs/screenshots/type_regle.png) |
+| **Types de règles** — Réglages<br>![Types de règles](docs/screenshots/types.png) | **Carte du tableau de bord** — désarmée, armée, déclenchée<br>![Carte](docs/screenshots/carte.png) |
 
 *Captures réalisées sur une installation de démonstration : toutes les entités sont fictives.*
 
@@ -123,6 +147,7 @@ Ces services sont réservés aux administrateurs (et aux automatisations ou scri
 - Le mode avancé exécute un script Home Assistant avec les mêmes droits qu'un script créé par un administrateur ; le YAML est lu en mode sûr et vérifié par Home Assistant avant enregistrement.
 - Les identifiants d'entité, de règle et de service sont contrôlés, les textes affichés sont échappés, les tailles sont limitées (100 règles, 50 actions par règle, 20 actions en cas d'échec, 100 étapes par script avancé, journal de 50 lignes).
 - Les actions lancées par un test sont rattachées à l'utilisateur qui l'a lancé, et celles lancées par l'alarme au changement d'état de l'alarme (journal de bord).
+- La carte lit l'état de l'alarme et les noms et résultats des règles exécutées (lecture seule, pour tout utilisateur connecté) ; armer et désarmer passent par les services de l'alarme, avec les droits de l'utilisateur. Le code n'est jamais enregistré.
 - Comme toute entité Home Assistant, l'interrupteur « Protocole actif », les interrupteurs de règle et les boutons « Tester » peuvent être utilisés par tous les utilisateurs et par les assistants vocaux exposés ; limitez leur exposition si nécessaire.
 
 ### Limites
@@ -171,6 +196,8 @@ Protocole Alarme runs actions when you **arm** or **disarm** your Home Assistant
 - **Log** of the last 50 runs.
 - **Import / export** of rules from the panel (JSON file or clipboard), adding or replacing.
 - **Sidebar panel** “Protocole Alarme” readable by everyone; creating, editing and testing are reserved to administrators and the people they allow.
+- **Customisable rule types**: add, rename, icon, order and delete in Settings; rules of a deleted type go to “Other”. In the list, each type can be collapsed or expanded (remembered on the device).
+- **Dashboard card** “Protocole Alarme”: arm / disarm (with a code if the alarm requires one), green shield when disarmed and red when armed, rules that ran since the last arming or disarming (live), sensors as buttons; collapsible lists. No resource to add.
 - **French and English interface**, following the user's language.
 
 ### Installation
@@ -196,11 +223,32 @@ Open the **Protocole Alarme** panel in the sidebar.
 | Rules | Arming and disarming rules, enable, test, edit, duplicate, delete; add with the wizard or from a template |
 | Entities | The created entities with their state |
 | Log | Latest runs: rule, moment, result, detail |
-| Settings | Followed alarm, protocol enabled or paused, Lights Simulator status, rule import / export, people allowed to change rules (administrators) |
+| Settings | Followed alarm, protocol enabled or paused, Lights Simulator status, rule types, rule import / export, people allowed to change rules (administrators) |
 
 The integration's **Configure** button changes the alarm and shows or hides the panel in the sidebar. When hidden, it stays reachable at `/protocole-alarme`.
 
 **When does a rule run?** On arming, when the alarm goes from *disarmed* or *arming* to an *armed* state (away, night, home, vacation, custom). On disarming, when it goes back to *disarmed* from an armed, pending or triggered state. For disarming rules, the mode filter applies to the mode the alarm was armed in. With the “Also watch while armed” option, an arming rule also runs when one of its conditions becomes true while the alarm is armed in one of its modes, after the optional delay after arming, unless the condition was already true when armed and the “Ignore if already the case when armed” option is checked (with “Only if…”, as long as the chosen entity stays in the given state).
+
+### Dashboard card
+
+Edit dashboard → **Add card** → **Protocole Alarme**. Everything can be set in the visual editor; in YAML:
+
+```yaml
+type: custom:protocole-alarme-card
+entity: alarm_control_panel.house_alarm   # optional: the alarm followed by the integration by default
+nom: Alarm                                # optional: title
+modes:                                    # modes shown (modes the alarm does not support are ignored)
+  - armed_away
+  - armed_night
+capteurs:                                 # sensor buttons
+  - binary_sensor.living_room_window
+  - binary_sensor.garage_door
+afficher_regles: true                     # “Rules that ran” list
+afficher_capteurs: true                   # “Sensors” list
+afficher_panneau: true                    # “Rules” button to the panel (alarm disarmed)
+```
+
+Shield: green (disarmed), red (armed), orange (arming, pending), blinking red (alarm triggered), grey (unavailable). The rules shown are the ones that actually acted since the last arming or disarming, with their check result. Tap a list title to collapse it; tap a sensor to open its details. The **Rules** button opens the Protocole Alarme panel; it only shows while the alarm is disarmed.
 
 ### Screenshots
 
@@ -237,6 +285,7 @@ These services are reserved to administrators (and to Home Assistant automations
 - Advanced mode runs a Home Assistant script with the same rights as a script created by an administrator; the YAML is parsed safely and checked by Home Assistant before saving.
 - Entity, rule and service IDs are validated, displayed text is escaped, sizes are bounded (100 rules, 50 actions per rule, 20 actions on failure, 100 steps per advanced script, 50 log lines).
 - Actions started by a test are linked to the user who started it, and those started by the alarm to the alarm state change (logbook).
+- The card reads the alarm state and the names and results of rules that ran (read-only, for any logged-in user); arming and disarming go through the alarm services, with the user's rights. The code is never stored.
 - Like any Home Assistant entity, the “Protocol enabled” switch, rule switches and “Test” buttons can be used by every user and by exposed voice assistants; limit their exposure if needed.
 
 ### Limitations

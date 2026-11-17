@@ -34,8 +34,17 @@ IMPULSION = "impulsion"
 TITRE_DEFAUT = "Protocole Alarme"
 MESSAGE_ECHEC_FR = "⚠️ « {{ regle }} » : {{ entite }} est {{ etat_actuel }} au lieu de {{ etat_attendu }}."
 
-# Types de règle (classement dans le panneau)
+# Types de règle (classement dans le panneau) : types d'origine, traduits dans le panneau
 CATEGORIES = ["volets", "intrusion", "acces", "lumieres", "chauffage", "notifications", "autres"]
+ICONES_CATEGORIES = {
+    "volets": "mdi:window-shutter", "intrusion": "mdi:alarm-light", "acces": "mdi:garage-variant",
+    "lumieres": "mdi:lightbulb-group", "chauffage": "mdi:thermostat", "notifications": "mdi:bell-ring",
+    "autres": "mdi:shape-outline",
+}
+TYPE_DEFAUT = "autres"  # ne peut pas être supprimé
+TYPES_MAX = 30
+_RE_TYPE = re.compile(r"^[\da-z_]{1,32}$")
+_RE_ICONE = re.compile(r"^mdi:[\da-z-]{1,64}$")
 
 
 @dataclass(frozen=True)
@@ -191,7 +200,7 @@ SCHEMA_REGLE = vol.Schema(
         vol.Optional("grace_s", default=0): _secondes(600),
         vol.Optional("tolerer", default=False): bool,
         vol.Optional("tolerer_si", default=None): vol.Any(None, SCHEMA_CONDITION),
-        vol.Optional("categorie", default=None): vol.Any(None, vol.In(CATEGORIES)),
+        vol.Optional("categorie", default=None): vol.Any(None, vol.Match(_RE_TYPE)),
         vol.Optional("verification", default=None): vol.Any(None, SCHEMA_VERIFICATION),
         vol.Optional("avance", default=False): bool,
         vol.Optional("sequence", default=list): vol.All([dict], vol.Length(max=SEQUENCE_MAX)),
@@ -511,3 +520,37 @@ def doit_declencher(regle: dict, entity_id: str, ancien: str | None, nouveau: st
         # La tolérance tombe (ex. volet rouvert alors que la fenêtre est ouverte)
         return nouveau not in ETATS_INCONNUS and conditions_remplies(regle, lire_etat)[0]
     return False
+
+
+SCHEMA_TYPE = vol.Schema(
+    {
+        vol.Required("id"): vol.Match(_RE_TYPE),
+        vol.Optional("nom", default=None): vol.Any(None, _texte(40, obligatoire=False)),
+        vol.Optional("icone", default="mdi:shape-outline"): vol.Match(_RE_ICONE),
+    },
+    extra=vol.REMOVE_EXTRA,
+)
+
+
+def types_defaut() -> list[dict]:
+    return [{"id": c, "nom": None, "icone": ICONES_CATEGORIES[c]} for c in CATEGORIES]
+
+
+def normaliser_types(liste: list) -> list[dict]:
+    """Types de règle (ordre conservé). Lève vol.Invalid avec un code."""
+    if not isinstance(liste, list) or len(liste) > TYPES_MAX:
+        raise vol.Invalid("types_invalides")
+    types: list[dict] = []
+    vus: set[str] = set()
+    for brut in liste:
+        t = SCHEMA_TYPE(brut)
+        if t["id"] in vus:
+            raise vol.Invalid("types_invalides")
+        nom = (t["nom"] or "").strip() or None
+        if nom is None and t["id"] not in CATEGORIES:
+            raise vol.Invalid("type_sans_nom")  # un type créé doit avoir un nom
+        vus.add(t["id"])
+        types.append({"id": t["id"], "nom": nom, "icone": t["icone"]})
+    if TYPE_DEFAUT not in vus:
+        types.append({"id": TYPE_DEFAUT, "nom": None, "icone": ICONES_CATEGORIES[TYPE_DEFAUT]})
+    return types

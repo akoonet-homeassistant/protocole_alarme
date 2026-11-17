@@ -49,6 +49,8 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 
 EVT_TEST = "test"
+# Résultats montrés sur la carte : la règle a réellement agi (ou sa vérification a abouti)
+RESULTATS_CARTE = {RES_OK, RES_ERREUR, RES_VERIF_OK, RES_VERIF_ECHEC}
 
 # Message envoyé quand une vérification échoue (modifiable dans le panneau, même syntaxe)
 MESSAGE_ECHEC_DEFAUT = {
@@ -87,9 +89,15 @@ class Moteur:
         self.regles = [r for r in donnees.get("regles", []) if isinstance(r, dict) and r.get("id")]
         self.actif = bool(donnees.get("actif", True))
         self.editeurs = [str(u) for u in donnees.get("editeurs", []) if u]
+        try:
+            self.types = R.normaliser_types(donnees["types"]) if donnees.get("types") else R.types_defaut()
+        except vol.Invalid:
+            self.types = R.types_defaut()
         self.journal = list(donnees.get("journal", []))[:JOURNAL_MAX]
         self.dernier_mode = donnees.get("dernier_mode")
         self.arme_depuis = dt_util.parse_datetime(donnees["arme_depuis"]) if donnees.get("arme_depuis") else None
+        # Dernier armement ou désarmement : la carte affiche les règles exécutées depuis
+        self.dernier_evenement: dict | None = donnees.get("dernier_evenement")
         self.tolerees: set[str] = set(donnees.get("tolerees", []))
         self.derniere_execution = donnees.get("derniere_execution")
         self.echec_verification = bool(donnees.get("echec_verification", False))
@@ -106,7 +114,7 @@ class Moteur:
             if "categorie" in regle and "notifiers" not in (regle.get("verification") or {}):
                 continue
             try:
-                self.regles[index] = R.normaliser(regle, self.message_defaut)
+                self.regles[index] = self._ranger(R.normaliser(regle, self.message_defaut))
                 change = True
             except (vol.Invalid, ValueError) as err:
                 _LOGGER.warning("Règle « %s » non convertie : %s", regle.get("nom"), err)
@@ -131,7 +139,9 @@ class Moteur:
             "regles": self.regles,
             "actif": self.actif,
             "editeurs": self.editeurs,
+            "types": self.types,
             "journal": self.journal,
+            "dernier_evenement": self.dernier_evenement,
             "dernier_mode": self.dernier_mode,
             "arme_depuis": self.arme_depuis.isoformat() if self.arme_depuis else None,
             "tolerees": sorted(self.tolerees),
@@ -156,6 +166,10 @@ class Moteur:
         evenement = evenement_alarme(ancien, nouveau)
         if evenement is None:
             return
+        self.dernier_evenement = {
+            "evenement": evenement, "date": dt_util.utcnow().isoformat(),
+            "mode": nouveau if evenement == EVT_ARMEMENT else None,
+        }
         if evenement == EVT_ARMEMENT:
             self.dernier_mode = nouveau
             self.arme_depuis = dt_util.utcnow()
@@ -434,7 +448,7 @@ class Moteur:
                 raise vol.Invalid(f"message_invalide: {err}") from err
 
     async def async_enregistrer(self, brute: dict) -> dict:
-        regle = R.normaliser(brute, self.message_defaut)
+        regle = self._ranger(R.normaliser(brute, self.message_defaut))
         self.valider_message(regle)
         await self.async_valider_sequence(regle)
         existante = self.regle(regle["id"])
@@ -448,14 +462,32 @@ class Moteur:
         await self._appliquer(recharger)
         return regle
 
-    async def async_importer(self, brutes: list[dict], remplacer: bool = False) -> list[dict]:
-        """Ajoute (ou remplace par) une liste de règles. Tout est vérifié avant de modifier quoi que ce soit."""
+    async def async_importer(
+        self, brutes: list[dict], remplacer: bool = False, types: list | None = None
+    ) -> list[dict]:
+        """Ajoute (ou remplace par) une liste de règles. Tout est vérifié avant de modifier quoi que ce soit.
+
+        types : types de règle du fichier ; ceux qui n'existent pas encore sont ajoutés (avant « Autres »).
+        """
+        anciens_types = self.types
+        if types:
+            connus = {t["id"] for t in self.types}
+            ajout = [t for t in R.normaliser_types(types) if t["id"] not in connus]
+            fusion = [t for t in self.types if t["id"] != R.TYPE_DEFAUT] + ajout
+            self.types = R.normaliser_types(fusion + [t for t in self.types if t["id"] == R.TYPE_DEFAUT])
+        try:
+            return await self._importer(brutes, remplacer)
+        except vol.Invalid:
+            self.types = anciens_types
+            raise
+
+    async def _importer(self, brutes: list[dict], remplacer: bool) -> list[dict]:
         nouvelles: list[dict] = []
         for brute in brutes:
             if not isinstance(brute, dict):
                 raise vol.Invalid("regle_invalide")
             # En ajout, chaque règle importée reçoit un nouvel identifiant (pas de collision)
-            regle = R.normaliser({**brute, "id": None} if not remplacer else brute, self.message_defaut)
+            regle = self._ranger(R.normaliser({**brute, "id": None} if not remplacer else brute, self.message_defaut))
             self.valider_message(regle)
             await self.async_valider_sequence(regle)
             nouvelles.append(regle)
@@ -494,6 +526,18 @@ class Moteur:
 
     async def async_changer_editeurs(self, editeurs: list[str]) -> None:
         self.editeurs = sorted(set(editeurs))
+        await self._appliquer(False)
+
+    def _ranger(self, regle: dict) -> dict:
+        """Une règle dont le type n'existe plus va dans « Autres »."""
+        if regle.get("categorie") not in {t["id"] for t in self.types}:
+            regle["categorie"] = R.TYPE_DEFAUT
+        return regle
+
+    async def async_changer_types(self, types: list) -> None:
+        self.types = R.normaliser_types(types)
+        for regle in self.regles:
+            self._ranger(regle)
         await self._appliquer(False)
 
     async def async_changer_actif(self, actif: bool) -> None:
@@ -540,6 +584,25 @@ class Moteur:
             "derniere_execution": self.derniere_execution,
             "echec_verification": self.echec_verification,
             "en_cours": sum(len(t) for t in self._taches.values()),
+        }
+
+    # ------------------------------------------------------------------ carte du tableau de bord
+
+    def donnees_carte(self) -> dict:
+        """Règles qui ont agi depuis le dernier armement / désarmement (pour la carte)."""
+        depuis = (self.dernier_evenement or {}).get("date")
+        executions = [
+            {k: e.get(k) for k in ("date", "regle", "regle_id", "evenement", "resultat", "detail")}
+            for e in self.journal
+            if e.get("regle") and e.get("resultat") in RESULTATS_CARTE
+            and e.get("evenement") != EVT_TEST and (depuis is None or e["date"] >= depuis)
+        ]
+        return {
+            "alarme": self.alarme,
+            "actif": self.actif,
+            "evenement": self.dernier_evenement,
+            "executions": executions[:20],
+            "echec_verification": self.echec_verification,
         }
 
 

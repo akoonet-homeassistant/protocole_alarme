@@ -36,8 +36,15 @@ const CATEGORIES = [
 const TITRE_DEFAUT = "Protocole Alarme";
 
 // Même logique que regles.categorie_auto côté serveur
-const CLES_CATEGORIES = new Set(CATEGORIES.map(([c]) => c));
-const categorieDe = (r) => (CLES_CATEGORIES.has(r.categorie) ? r.categorie : categorieAuto(r));
+const TYPES_DEFAUT = CATEGORIES.map(([id, icone]) => ({ id, nom: null, icone }));
+// Icônes proposées pour un type de règle
+const ICONES_TYPES = [
+  "mdi:window-shutter", "mdi:window-open-variant", "mdi:alarm-light", "mdi:shield-home", "mdi:garage-variant", "mdi:door",
+  "mdi:lock", "mdi:lightbulb-group", "mdi:home-lightbulb", "mdi:thermostat", "mdi:radiator", "mdi:water",
+  "mdi:bell-ring", "mdi:cctv", "mdi:robot-vacuum", "mdi:power-plug", "mdi:television", "mdi:pool",
+  "mdi:flower", "mdi:car", "mdi:paw", "mdi:weather-night", "mdi:star", "mdi:shape-outline",
+];
+const CLE_REPLIES = "protocole_alarme.types_replies";
 const categorieAuto = (r) => {
   const actions = r.actions || [];
   if (r.avance || !actions.length) return "autres";
@@ -314,6 +321,39 @@ class ProtocoleAlarmePanel extends HTMLElement {
           this._d.editeurs = res.editeurs;
           break;
         }
+        case "groupe": this._basculerGroupe(d.v); break;
+        case "groupes-tous": {
+          const r = this._replies();
+          const ids = this._types().map((t) => t.id);
+          if (d.v === "1") ids.forEach((id) => r.delete(id)); else ids.forEach((id) => r.add(id));
+          try { localStorage.setItem(CLE_REPLIES, JSON.stringify([...r])); } catch (_e) { /* mémoire seulement */ }
+          break;
+        }
+        case "type-ajouter": {
+          const types = [...this._types()];
+          const id = `t${Math.random().toString(36).slice(2, 10)}`;
+          types.splice(Math.max(types.findIndex((t) => t.id === "autres"), 0), 0, { id, nom: this.t("nouveau_type"), icone: "mdi:star" });
+          await this._enregistrerTypes(types);
+          this._typeEdite = id;
+          break;
+        }
+        case "type-monter":
+        case "type-descendre": {
+          const types = [...this._types()];
+          const k = types.findIndex((t) => t.id === d.v);
+          const j = d.a === "type-monter" ? k - 1 : k + 1;
+          if (k < 0 || j < 0 || j >= types.length) break;
+          [types[k], types[j]] = [types[j], types[k]];
+          await this._enregistrerTypes(types);
+          break;
+        }
+        case "type-supprimer": await this._enregistrerTypes(this._types().filter((t) => t.id !== d.v)); break;
+        case "type-icones": this._typeEdite = this._typeEdite === d.v ? null : d.v; break;
+        case "type-icone": {
+          await this._enregistrerTypes(this._types().map((t) => (t.id === d.id ? { ...t, icone: d.v } : t)));
+          this._typeEdite = null;
+          break;
+        }
         case "exporter": await this._exporter(false); return;
         case "copier-export": await this._exporter(true); return;
         case "import-mode": this._import.remplacer = d.v === "1"; this._import.confirmer = false; break;
@@ -365,6 +405,17 @@ class ProtocoleAlarmePanel extends HTMLElement {
   _changement(e) {
     const c = e.target;
     if (c.dataset.f === "fichier-import") { this._lireFichier(c.files?.[0]); c.value = ""; return; }
+    if (c.dataset.f === "type-nom") {
+      const nom = c.value.trim();
+      const types = this._types().map((t) => {
+        if (t.id !== c.dataset.id) return t;
+        const origine = CATEGORIES.some(([x]) => x === t.id);
+        // Nom vide : un type d'origine reprend son nom traduit ; un type créé garde l'ancien nom
+        return { ...t, nom: nom || (origine ? null : t.nom) };
+      });
+      this._enregistrerTypes(types).then(() => this._dessiner()).catch((err) => this._annoncer(this._texteErreur(err), true));
+      return;
+    }
     const b = this._brouillon;
     if (!c.dataset.f) return;
     const i = c.dataset.i !== undefined ? Number(c.dataset.i) : null;
@@ -397,6 +448,32 @@ class ProtocoleAlarmePanel extends HTMLElement {
   // ------------------------------------------------------------------ règles et brouillon
 
   _regle(id) { return (this._d?.regles || []).find((r) => r.id === id); }
+
+  // ---- Types de règle
+  _types() { return this._d?.types?.length ? this._d.types : TYPES_DEFAUT; }
+  _nomType(t) { return t.nom || (CATEGORIES.some(([c]) => c === t.id) ? this.t(`cat_${t.id}`) : t.id); }
+  _categorieDe(r) {
+    const ids = new Set(this._types().map((t) => t.id));
+    if (ids.has(r.categorie)) return r.categorie;
+    const auto = categorieAuto(r);
+    return ids.has(auto) ? auto : "autres";
+  }
+  _replies() {
+    if (!this.__replies) {
+      try { this.__replies = new Set(JSON.parse(localStorage.getItem(CLE_REPLIES) || "[]")); } catch (_e) { this.__replies = new Set(); }
+    }
+    return this.__replies;
+  }
+  _basculerGroupe(id) {
+    const r = this._replies();
+    if (r.has(id)) r.delete(id); else r.add(id);
+    try { localStorage.setItem(CLE_REPLIES, JSON.stringify([...r])); } catch (_e) { /* stockage indisponible : l'état reste en mémoire */ }
+  }
+  async _enregistrerTypes(types) {
+    const res = await this._ws("types", { types });
+    this._d.types = res.types;
+    this._d.regles = res.regles;
+  }
 
   // Liste d'actions visée : actions de la règle, ou actions en cas d'échec de la vérification (data-l="v")
   _liste(d) { return d?.l === "v" ? this._brouillon.verification.actions : this._brouillon.actions; }
@@ -760,18 +837,31 @@ class ProtocoleAlarmePanel extends HTMLElement {
     if (!d.instantane.actif) avert.push(`<div class="bandeau orange">${this.t("protocole_pause")}</div>`);
     if (utiliseLs && ls.double_pilotage) avert.push(`<div class="bandeau orange">${this.t("ls_double")}</div>`);
     if (utiliseLs && ls.statut !== "pret") avert.push(`<div class="bandeau orange">${this.t("err.simulateur_absent")}</div>`);
-    const groupes = CATEGORIES.map(([c, icone]) => [c, icone, liste.filter((r) => categorieDe(r) === c)]).filter(([, , rs]) => rs.length);
-    const cartes = groupes.map(([c, icone, rs]) => `
+    const replies = this._replies();
+    const groupes = this._types().map((t) => [t, liste.filter((r) => this._categorieDe(r) === t.id)]).filter(([, rs]) => rs.length);
+    const cartes = groupes.map(([t, rs]) => {
+      const ouvert = !replies.has(t.id);
+      const actives = rs.filter((r) => r.actif).length;
+      return `
       <section class="groupe">
-        <h3 class="titre-groupe"><ha-icon icon="${icone}"></ha-icon>${this.t(`cat_${c}`)}<span class="nb">${rs.length}</span></h3>
-        <div class="pile">${rs.map((r) => this._carteRegle(r)).join("")}</div>
-      </section>`).join("") || `<div class="carte vide">${this.t("aucune_regle")}</div>`;
+        <button type="button" class="titre-groupe" aria-expanded="${ouvert}" data-a="groupe" data-v="${esc(t.id)}">
+          <ha-icon icon="${esc(t.icone)}"></ha-icon><span class="nom-groupe">${esc(this._nomType(t))}</span>
+          <span class="nb" title="${esc(this.t("n_actives", { a: actives, n: rs.length }))}">${actives === rs.length ? rs.length : `${actives}/${rs.length}`}</span>
+          <ha-icon class="chevron" icon="${ouvert ? "mdi:chevron-up" : "mdi:chevron-down"}"></ha-icon>
+        </button>
+        ${ouvert ? `<div class="pile">${rs.map((r) => this._carteRegle(r)).join("")}</div>` : ""}
+      </section>`;
+    }).join("") || `<div class="carte vide">${this.t("aucune_regle")}</div>`;
+    const tousReplies = groupes.length > 1 && groupes.every(([t]) => replies.has(t.id));
+    const outils = groupes.length > 1 ? `<div class="outils-groupes"><button type="button" class="lien" data-a="groupes-tous" data-v="${tousReplies ? "1" : "0"}">
+      <ha-icon icon="${tousReplies ? "mdi:unfold-more-horizontal" : "mdi:unfold-less-horizontal"}"></ha-icon>${this.t(tousReplies ? "tout_deplier" : "tout_replier")}</button></div>` : "";
     return `
       ${avert.join("")}
       <div class="seg" role="tablist">
         ${["armement", "desarmement"].map((ev) => `<button type="button" role="tab" aria-selected="${ev === this._evenement}" class="${ev === this._evenement ? "on" : ""}" data-a="evenement" data-v="${ev}">
           <ha-icon icon="${ICONE_EVENEMENT[ev]}"></ha-icon>${this.t(ev)} (${nb(ev)})</button>`).join("")}
       </div>
+      ${outils}
       ${cartes}
       ${this._editeur ? `<div class="boutons-bas">
         <button type="button" class="btn primaire grand" data-a="nouvelle"><ha-icon icon="mdi:plus"></ha-icon>${this.t("ajouter_regle")}</button>
@@ -1098,9 +1188,9 @@ class ProtocoleAlarmePanel extends HTMLElement {
       </div>
       <div class="carte bloc">
         <span class="etiquette">${this.t("type_regle")}</span>
-        <div class="chips">${CATEGORIES.map(([c, icone]) => {
-          const on = categorieDe(b) === c;
-          return `<button type="button" class="chip ${on ? "on" : ""}" aria-pressed="${on}" data-a="categorie" data-v="${c}"><ha-icon icon="${on ? "mdi:check" : icone}"></ha-icon>${this.t(`cat_${c}`)}</button>`;
+        <div class="chips">${this._types().map((t) => {
+          const on = this._categorieDe(b) === t.id;
+          return `<button type="button" class="chip ${on ? "on" : ""}" aria-pressed="${on}" data-a="categorie" data-v="${esc(t.id)}"><ha-icon icon="${on ? "mdi:check" : esc(t.icone)}"></ha-icon>${esc(this._nomType(t))}</button>`;
         }).join("")}</div>
         <p class="sous">${this.t("type_regle_desc")}</p>
       </div>
@@ -1264,7 +1354,8 @@ class ProtocoleAlarmePanel extends HTMLElement {
       const donnees = JSON.parse(await fichier.text());
       const regles = Array.isArray(donnees) ? donnees : donnees?.regles;
       if (!Array.isArray(regles) || !regles.length || !regles.every((r) => r && typeof r === "object")) throw new Error("format");
-      this._import = { regles, remplacer: false, confirmer: false };
+      const types = Array.isArray(donnees?.types) ? donnees.types.filter((t) => t && typeof t === "object").slice(0, 30) : undefined;
+      this._import = { regles, types, remplacer: false, confirmer: false };
     } catch (err) {
       this._import = null;
       this._annoncer(this.t("err.fichier_invalide"), true);
@@ -1276,10 +1367,36 @@ class ProtocoleAlarmePanel extends HTMLElement {
   async _importer() {
     const imp = this._import;
     if (imp.remplacer && !imp.confirmer) { imp.confirmer = true; this._dessiner(); return; }
-    const res = await this._ws("importer", { regles: imp.regles, remplacer: imp.remplacer });
+    const res = await this._ws("importer", { regles: imp.regles, remplacer: imp.remplacer, ...(imp.types?.length ? { types: imp.types } : {}) });
     this._import = null;
     this._annoncer(this.t("import_fait", { n: res.importees }));
     await this._attendreRechargement();
+  }
+
+  _carteTypes() {
+    const types = this._types();
+    const regles = this._d.regles || [];
+    const lignes = types.map((t, k) => {
+      const n = regles.filter((r) => this._categorieDe(r) === t.id).length;
+      const autres = t.id === "autres";
+      return `
+      <div class="ligne-type">
+        <button type="button" class="ic bleu bouton-ic" data-a="type-icones" data-v="${esc(t.id)}" aria-label="${esc(this.t("type_icone"))}" aria-expanded="${this._typeEdite === t.id}"><ha-icon icon="${esc(t.icone)}"></ha-icon></button>
+        <label class="nom-type"><span class="cache">${this.t("type_nom")}</span>
+          <input type="text" maxlength="40" data-f="type-nom" data-id="${esc(t.id)}" value="${esc(this._nomType(t))}">
+          <span class="sous n-regles">${this.t("n_regles", { n })}</span></label>
+        <button type="button" class="icone-btn" data-a="type-monter" data-v="${esc(t.id)}" ${k === 0 ? "disabled" : ""} aria-label="${esc(this.t("type_monter"))}"><ha-icon icon="mdi:arrow-up"></ha-icon></button>
+        <button type="button" class="icone-btn" data-a="type-descendre" data-v="${esc(t.id)}" ${k === types.length - 1 ? "disabled" : ""} aria-label="${esc(this.t("type_descendre"))}"><ha-icon icon="mdi:arrow-down"></ha-icon></button>
+        <button type="button" class="icone-btn" data-a="type-supprimer" data-v="${esc(t.id)}" ${autres ? "disabled" : ""} aria-label="${esc(this.t("type_supprimer"))}"><ha-icon icon="mdi:delete-outline"></ha-icon></button>
+      </div>
+      ${this._typeEdite === t.id ? `<div class="palette">${ICONES_TYPES.map((ic) => `<button type="button" class="chip ${ic === t.icone ? "on" : ""}" data-a="type-icone" data-id="${esc(t.id)}" data-v="${ic}" aria-label="${ic}"><ha-icon icon="${ic}"></ha-icon></button>`).join("")}</div>` : ""}`;
+    }).join("");
+    return `<div class="carte">
+      <h2>${this.t("types_titre")}</h2>
+      <p class="sous">${this.t("types_desc")}</p>
+      ${lignes}
+      <button type="button" class="btn pointille" data-a="type-ajouter" ${types.length >= 30 ? "disabled" : ""}><ha-icon icon="mdi:plus"></ha-icon>${this.t("ajouter_type")}</button>
+    </div>`;
   }
 
   _carteEditeurs() {
@@ -1317,6 +1434,7 @@ class ProtocoleAlarmePanel extends HTMLElement {
              ${ls.double_pilotage ? `<p class="avert">${this.t("ls_double")}</p>` : ""}`
           : ""}
       </div>`}
+      ${this._editeur ? this._carteTypes() : ""}
       ${this._editeur ? this._carteImportExport() : ""}
       ${this._admin ? this._carteEditeurs() : ""}
       <div class="carte"><h2>${this.t("version")}</h2><p class="sous">Protocole Alarme ${esc(d.version)}</p></div>
@@ -1350,7 +1468,22 @@ const STYLE = `
   .pile { display: flex; flex-direction: column; gap: 12px; }
   .groupe { display: flex; flex-direction: column; gap: 8px; }
   .groupe + .groupe { margin-top: 10px; }
-  .titre-groupe { display: flex; align-items: center; gap: 8px; margin: 4px 2px 0; font-size: 14px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--secondary-text-color, #5f6368); }
+  .titre-groupe { display: flex; align-items: center; gap: 8px; width: 100%; margin: 4px 0 0; padding: 8px 4px; min-height: 44px; border: 0; background: none; cursor: pointer; font: inherit; font-size: 14px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--secondary-text-color, #5f6368); text-align: left; border-radius: 8px; }
+  .titre-groupe:hover { background: rgba(0,0,0,.04); }
+  .titre-groupe .nom-groupe { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .titre-groupe .chevron { --mdc-icon-size: 22px; }
+  .outils-groupes { display: flex; justify-content: flex-end; margin-bottom: -6px; }
+  .ligne-type { display: flex; align-items: center; gap: 6px; padding: 6px 0; border-bottom: 1px solid var(--trait); }
+  .ligne-type .nom-type { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+  .ligne-type input { width: 100%; font: inherit; font-size: 15px; padding: 8px 10px; border: 1px solid var(--trait); border-radius: 8px; background: transparent; color: inherit; min-height: 40px; }
+  .ligne-type .n-regles { white-space: nowrap; padding-left: 4px; }
+  .ligne-type .icone-btn { width: 40px; height: 40px; }
+  .bouton-ic { border: 0; cursor: pointer; flex: none; }
+  .icone-btn:disabled { opacity: .3; cursor: default; }
+  .icone-btn:not(:disabled):hover { background: rgba(0,0,0,.06); }
+  .palette { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 0 10px 46px; }
+  .palette .chip { padding: 8px; min-width: 40px; justify-content: center; }
+  .cache { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
   .titre-groupe ha-icon { --mdc-icon-size: 18px; }
   .titre-groupe .nb { margin-left: auto; font-weight: 500; background: var(--secondary-background-color, #eceff1); border-radius: 999px; padding: 1px 9px; font-size: 12px; }
   .retrait { display: flex; flex-direction: column; gap: 8px; margin-left: 14px; padding-left: 12px; border-left: 3px solid var(--divider-color, #e0e0e0); }

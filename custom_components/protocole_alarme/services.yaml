@@ -10,3 +10,7 @@ importer_regles:
       default: false
       selector:
         boolean:
+    types:
+      required: false
+      selector:
+        object:

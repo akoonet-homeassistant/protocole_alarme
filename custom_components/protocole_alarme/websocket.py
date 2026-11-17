@@ -15,10 +15,11 @@ import yaml
 from homeassistant.components import websocket_api
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
 
 from . import regles as R
 from . import simulateur
-from .const import DOMAIN, ETATS_ARMES, REGLES_MAX, VERSION
+from .const import DOMAIN, ETATS_ARMES, REGLES_MAX, SIGNAL_MAJ, VERSION
 from .moteur import MESSAGE_ECHEC_DEFAUT, Moteur
 
 
@@ -32,8 +33,13 @@ def _moteur(hass: HomeAssistant) -> Moteur | None:
 def _services_notification(hass: HomeAssistant) -> list[str]:
     services = [f"notify.{nom}" for nom in sorted(hass.services.async_services_for_domain("notify"))]
     services = [s for s in services if s != "notify.send_message"]
-    # Entités de notification (Telegram, e-mail…) : envoyées par notify.send_message
-    entites = sorted(e for e in hass.states.async_entity_ids("notify") if e not in services)
+    # Entités de notification (Telegram, e-mail…) : envoyées par notify.send_message.
+    # Celles de l'application mobile doublent les services notify.mobile_app_* : masquées.
+    registre = er.async_get(hass)
+    entites = sorted(
+        e for e in hass.states.async_entity_ids("notify")
+        if e not in services and getattr(registre.async_get(e), "platform", None) != "mobile_app"
+    )
     return ["persistent_notification", *services, *entites]
 
 
@@ -68,6 +74,7 @@ async def _etat_complet(hass: HomeAssistant, moteur: Moteur, connection) -> dict
         "editeurs": moteur.editeurs if admin else [],
         "utilisateurs": await _utilisateurs(hass) if admin else [],
         "regles": moteur.regles,
+        "types": moteur.types,
         "instantane": moteur.instantane(),
         "journal": moteur.journal,
         "entites": sorted(entites, key=lambda e: e["entity_id"]),
@@ -114,7 +121,7 @@ def _erreur(connection, msg, err: Exception) -> None:
 def async_enregistrer(hass: HomeAssistant) -> None:
     for commande in (
         ws_etat, ws_enregistrer, ws_supprimer, ws_dupliquer, ws_activer, ws_tester, ws_actif,
-        ws_vider_journal, ws_vers_yaml, ws_depuis_yaml, ws_editeurs, ws_exporter, ws_importer,
+        ws_vider_journal, ws_vers_yaml, ws_depuis_yaml, ws_editeurs, ws_exporter, ws_importer, ws_types, ws_carte,
     ):
         websocket_api.async_register_command(hass, commande)
 
@@ -137,6 +144,24 @@ def _avec_moteur(fonction):
 @_avec_moteur
 async def ws_etat(hass, connection, msg, moteur: Moteur) -> None:
     connection.send_result(msg["id"], await _etat_complet(hass, moteur, connection))
+
+
+@websocket_api.websocket_command({vol.Required("type"): f"{DOMAIN}/carte"})
+@websocket_api.async_response
+@_avec_moteur
+async def ws_carte(hass, connection, msg, moteur: Moteur) -> None:
+    """Abonnement de la carte : règles exécutées depuis le dernier armement / désarmement (lecture seule)."""
+    signal = SIGNAL_MAJ.format(moteur.entry.entry_id)
+
+    @callback
+    def envoyer() -> None:
+        actuel = _moteur(hass)
+        if actuel is not None:
+            connection.send_message(websocket_api.event_message(msg["id"], actuel.donnees_carte()))
+
+    connection.subscriptions[msg["id"]] = async_dispatcher_connect(hass, signal, envoyer)
+    connection.send_result(msg["id"])
+    envoyer()
 
 
 @websocket_api.websocket_command({vol.Required("type"): f"{DOMAIN}/enregistrer", vol.Required("regle"): dict})
@@ -211,6 +236,22 @@ async def ws_actif(hass, connection, msg, moteur: Moteur) -> None:
     connection.send_result(msg["id"], {})
 
 
+@websocket_api.websocket_command({
+    vol.Required("type"): f"{DOMAIN}/types",
+    vol.Required("types"): vol.All([dict], vol.Length(max=R.TYPES_MAX)),
+})
+@websocket_api.async_response
+@_avec_editeur
+async def ws_types(hass, connection, msg, moteur: Moteur) -> None:
+    """Types de règle : ajout, renommage, icône, ordre, suppression (les règles orphelines vont dans « Autres »)."""
+    try:
+        await moteur.async_changer_types(msg["types"])
+    except vol.Invalid as err:
+        _erreur(connection, msg, err)
+        return
+    connection.send_result(msg["id"], {"types": moteur.types, "regles": moteur.regles})
+
+
 @websocket_api.websocket_command({vol.Required("type"): f"{DOMAIN}/vider_journal"})
 @websocket_api.async_response
 @_avec_editeur
@@ -279,13 +320,16 @@ async def ws_editeurs(hass, connection, msg, moteur: Moteur) -> None:
 @_avec_editeur
 async def ws_exporter(hass, connection, msg, moteur: Moteur) -> None:
     """Toutes les règles, pour un fichier de sauvegarde."""
-    connection.send_result(msg["id"], {"application": DOMAIN, "version": VERSION, "regles": moteur.regles})
+    connection.send_result(
+        msg["id"], {"application": DOMAIN, "version": VERSION, "types": moteur.types, "regles": moteur.regles}
+    )
 
 
 @websocket_api.websocket_command({
     vol.Required("type"): f"{DOMAIN}/importer",
     vol.Required("regles"): vol.All([dict], vol.Length(min=1, max=REGLES_MAX)),
     vol.Optional("remplacer", default=False): bool,
+    vol.Optional("types"): vol.All([dict], vol.Length(max=R.TYPES_MAX)),
 })
 @websocket_api.async_response
 @_avec_editeur
@@ -295,7 +339,7 @@ async def ws_importer(hass, connection, msg, moteur: Moteur) -> None:
         connection.send_error(msg["id"], websocket_api.ERR_UNAUTHORIZED, "avance_admin")
         return
     try:
-        nouvelles = await moteur.async_importer(msg["regles"], msg["remplacer"])
+        nouvelles = await moteur.async_importer(msg["regles"], msg["remplacer"], msg.get("types"))
     except vol.Invalid as err:
         _erreur(connection, msg, err)
         return

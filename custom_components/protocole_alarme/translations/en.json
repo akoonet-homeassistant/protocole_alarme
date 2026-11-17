@@ -73,6 +73,10 @@
         "remplacer": {
           "name": "Replace",
           "description": "Replaces all existing rules instead of adding to them."
+        },
+        "types": {
+          "name": "Rule types",
+          "description": "Rule types from the exported file; missing ones are added."
         }
       }
     }
