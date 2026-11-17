@@ -76,6 +76,7 @@ async def _etat_complet(hass: HomeAssistant, moteur: Moteur, connection) -> dict
         "regles": moteur.regles,
         "types": moteur.types,
         "instantane": moteur.instantane(),
+        "memoires": moteur.memoires_public(),
         "journal": moteur.journal,
         "entites": sorted(entites, key=lambda e: e["entity_id"]),
         "simulateur": await simulateur.async_etat(hass),

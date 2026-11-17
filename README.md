@@ -36,6 +36,7 @@ Protocole Alarme lance des actions quand vous **armez** ou **désarmez** votre a
 - **Déclencher l'alarme** : action qui déclenche l'alarme suivie (intrusion).
 - **Notification critique** : sur l'application mobile Home Assistant, sonne même en mode silencieux / Ne pas déranger.
 - **Mise à jour automatique** des règles des versions précédentes : la liste « Prévenir » de la vérification devient une action de notification, avec le même message.
+- **Remettre l'état au désarmement** (règles d'armement) : l'état des entités choisies est mémorisé juste avant que la règle agisse, puis remis au désarmement — avec la luminosité et la couleur d'une lumière, la position d'un volet, le mode et la consigne d'un thermostat. La liste se remplit avec les entités pilotées par la règle et se modifie à la main ; la mémoire survit à un redémarrage de Home Assistant et s'affiche dans la liste des règles. La remise en état passe avant les règles de désarmement, qui gardent le dernier mot.
 - **Délai avant exécution** par règle.
 - **Annulation** : désarmer l'alarme interrompt les règles d'armement encore en cours (délai, impulsion, vérification), et inversement.
 - **Redémarrage de Home Assistant** : ne déclenche aucune règle.
@@ -114,7 +115,7 @@ Bouclier : vert (désarmée), rouge (armée), orange (armement, attente), rouge 
 | **Import / export**<br>![Import](docs/screenshots/import.png) | **Intrusion — Quand ?** — délai après armement, tolérer seulement si le volet est fermé<br>![Intrusion](docs/screenshots/intrusion.png) |
 | **Volet — Alors…** — actions en cas d'échec (déclencher l'alarme, prévenir)<br>![Actions en cas d'échec](docs/screenshots/actions_echec.png) | **Récapitulatif** — type de règle<br>![Type de règle](docs/screenshots/type_regle.png) |
 | **Réglages sur grand écran** — général, types de règles, accès, sauvegarde<br>![Réglages](docs/screenshots/types.png) | **Carte du tableau de bord** — désarmée, armée, déclenchée<br>![Carte](docs/screenshots/carte.png) |
-| **Configuration de la carte** — modes, capteurs triés<br>![Configuration de la carte](docs/screenshots/carte_config.png) | |
+| **Configuration de la carte** — modes, capteurs triés<br>![Configuration de la carte](docs/screenshots/carte_config.png) | **Remettre l'état au désarmement** — entités mémorisées, état affiché dans la liste<br>![Remettre l'état](docs/screenshots/restaurer.png) |
 
 *Captures réalisées sur une installation de démonstration : toutes les entités sont fictives.*
 
@@ -150,6 +151,7 @@ Ces services sont réservés aux administrateurs (et aux automatisations ou scri
 - Les identifiants d'entité, de règle et de service sont contrôlés, les textes affichés sont échappés, les tailles sont limitées (100 règles, 50 actions par règle, 20 actions en cas d'échec, 100 étapes par script avancé, journal de 50 lignes).
 - Les actions lancées par un test sont rattachées à l'utilisateur qui l'a lancé, et celles lancées par l'alarme au changement d'état de l'alarme (journal de bord).
 - La carte lit l'état de l'alarme et les noms et résultats des règles exécutées (lecture seule, pour tout utilisateur connecté) ; armer et désarmer passent par les services de l'alarme, avec les droits de l'utilisateur. Le code n'est jamais enregistré.
+- La remise en état au désarmement n'accepte que des entités dont l'état peut être rejoué (lumières, interrupteurs, volets, thermostats…) et seulement l'état et quelques réglages utiles ; les **serrures sont exclues** pour ne jamais déverrouiller une porte automatiquement. La mémoire est relue et contrôlée au démarrage.
 - Comme toute entité Home Assistant, l'interrupteur « Protocole actif », les interrupteurs de règle et les boutons « Tester » peuvent être utilisés par tous les utilisateurs et par les assistants vocaux exposés ; limitez leur exposition si nécessaire.
 
 ### Limites
@@ -159,6 +161,8 @@ Ces services sont réservés aux administrateurs (et aux automatisations ou scri
 - Lights Simulator est piloté par son sélecteur « Mode » ; il doit être installé et configuré séparément.
 - La notification critique utilise les paramètres de l'application mobile Home Assistant ; les entités de notification (Telegram…) reçoivent un message normal.
 - Le type de règle est deviné d'après les actions (ex. un interrupteur qui pilote des lumières est classé dans « Autres ») : changez-le dans le récapitulatif si besoin.
+- Remettre l'état d'un **interrupteur général** (qui allume ou éteint plusieurs lumières) les rallume toutes : mettez plutôt les lumières une par une dans la liste à remettre en état.
+- La remise en état rejoue l'état d'avant l'armement, même si l'entité a été changée entre-temps. Si l'alarme est désarmée pendant un arrêt de Home Assistant ou quand le protocole est en pause, rien n'est remis et la mémoire est oubliée.
 
 ---
 
@@ -188,6 +192,7 @@ Protocole Alarme runs actions when you **arm** or **disarm** your Home Assistant
 - **Trigger the alarm**: action that triggers the followed alarm (intrusion).
 - **Critical notification**: on the Home Assistant mobile app, rings even in silent / Do Not Disturb mode.
 - **Automatic upgrade** of rules from earlier versions: the check's “Notify” list becomes a notification action, with the same message.
+- **Restore the state on disarming** (arming rules): the state of the chosen entities is saved right before the rule acts, then put back when the alarm is disarmed — including a light's brightness and colour, a shutter's position, a thermostat's mode and setpoint. The list is filled with the entities the rule drives and can be edited by hand; the saved state survives a Home Assistant restart and is shown in the rule list. Restoring happens before the disarming rules, which keep the last word.
 - **Delay before running** per rule.
 - **Cancellation**: disarming stops arming rules still in progress (delay, pulse, check), and the other way round.
 - **Home Assistant restart**: never triggers a rule.
@@ -289,6 +294,7 @@ These services are reserved to administrators (and to Home Assistant automations
 - Entity, rule and service IDs are validated, displayed text is escaped, sizes are bounded (100 rules, 50 actions per rule, 20 actions on failure, 100 steps per advanced script, 50 log lines).
 - Actions started by a test are linked to the user who started it, and those started by the alarm to the alarm state change (logbook).
 - The card reads the alarm state and the names and results of rules that ran (read-only, for any logged-in user); arming and disarming go through the alarm services, with the user's rights. The code is never stored.
+- Restoring on disarming only accepts entities whose state can be replayed (lights, switches, covers, thermostats…) and only their state and a few useful settings; **locks are excluded** so a door is never unlocked automatically. The saved state is read back and checked at startup.
 - Like any Home Assistant entity, the “Protocol enabled” switch, rule switches and “Test” buttons can be used by every user and by exposed voice assistants; limit their exposure if needed.
 
 ### Limitations
@@ -298,6 +304,8 @@ These services are reserved to administrators (and to Home Assistant automations
 - Lights Simulator is driven through its “Mode” select; it must be installed and set up separately.
 - The critical notification uses Home Assistant mobile app settings; notification entities (Telegram…) receive a normal message.
 - The rule type is guessed from the actions (e.g. a switch that drives lights is filed under “Other”): change it in the summary if needed.
+- Restoring a **master switch** (one that turns several lights on or off) turns them all back on: list the lights one by one instead.
+- Restoring replays the state from before arming, even if the entity was changed in the meantime. If the alarm is disarmed while Home Assistant is stopped or while the protocol is paused, nothing is restored and the saved state is dropped.
 
 ## Licence / License
 

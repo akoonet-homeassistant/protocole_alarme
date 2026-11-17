@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 DOMAIN = "protocole_alarme"
-VERSION = "2026.11.10"
+VERSION = "2026.11.11"
 NOM_APPAREIL = "Protocole Alarme"
 
 PANEL_URL = "protocole-alarme"
@@ -48,6 +48,7 @@ RES_VERIF_OK = "verif_ok"
 RES_VERIF_ECHEC = "verif_echec"
 RES_ANNULEE = "annulee"
 RES_PAUSE = "pause"
+RES_RESTAUREE = "restauree"
 
 # Lights Simulator (intégration du même auteur)
 LS_DOMAINE = "lights_simulator"

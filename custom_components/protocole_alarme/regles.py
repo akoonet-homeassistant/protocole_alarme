@@ -186,6 +186,41 @@ SCHEMA_VERIFICATION = vol.Schema(
     extra=vol.REMOVE_EXTRA,
 )
 
+# « Remettre l'état au désarmement » : domaines dont l'état se rejoue avec scene.apply.
+# Les serrures sont exclues volontairement : on ne déverrouille jamais une porte automatiquement.
+DOMAINES_RESTAURABLES = frozenset({
+    "light", "switch", "cover", "climate", "fan", "media_player", "input_boolean", "valve", "siren",
+    "humidifier", "water_heater", "select", "input_select", "input_number", "number", "automation",
+})
+RESTAURER_MAX = 100
+# Attributs utiles par domaine (ceux que Home Assistant sait rejouer)
+ATTRIBUTS_RESTAURES = {
+    "light": ("brightness", "color_mode", "color_temp_kelvin", "hs_color", "rgb_color", "rgbw_color", "rgbww_color", "xy_color", "effect"),
+    "cover": ("current_position", "current_tilt_position"),
+    "valve": ("current_position",),
+    "climate": ("temperature", "target_temp_high", "target_temp_low", "preset_mode", "fan_mode", "swing_mode", "humidity"),
+    "fan": ("percentage", "preset_mode", "direction", "oscillating"),
+    "media_player": ("volume_level", "is_volume_muted", "source", "sound_mode"),
+    "humidifier": ("humidity", "mode"),
+    "water_heater": ("temperature", "away_mode"),
+}
+
+
+def _entite_restaurable(valeur: Any) -> str:
+    entity_id = _entity_id(valeur)
+    if _domaine(entity_id) not in DOMAINES_RESTAURABLES:
+        raise vol.Invalid("restaurer_domaine")
+    return entity_id
+
+
+SCHEMA_RESTAURER = vol.Schema(
+    {
+        vol.Optional("active", default=False): bool,
+        vol.Optional("entites", default=list): vol.All([_entite_restaurable], vol.Length(max=RESTAURER_MAX)),
+    },
+    extra=vol.REMOVE_EXTRA,
+)
+
 SCHEMA_REGLE = vol.Schema(
     {
         vol.Optional("id"): _identifiant,
@@ -202,6 +237,7 @@ SCHEMA_REGLE = vol.Schema(
         vol.Optional("tolerer_si", default=None): vol.Any(None, SCHEMA_CONDITION),
         vol.Optional("categorie", default=None): vol.Any(None, vol.Match(_RE_TYPE)),
         vol.Optional("verification", default=None): vol.Any(None, SCHEMA_VERIFICATION),
+        vol.Optional("restaurer", default=None): vol.Any(None, SCHEMA_RESTAURER),
         vol.Optional("avance", default=False): bool,
         vol.Optional("sequence", default=list): vol.All([dict], vol.Length(max=SEQUENCE_MAX)),
     },
@@ -352,6 +388,14 @@ def normaliser(brute: dict, message_defaut: str | None = None) -> dict:
         regle["tolerer"] = False
         regle["grace_s"] = 0
     regle["categorie"] = regle["categorie"] or categorie_auto(regle)
+    restaurer = regle["restaurer"] or {}
+    if regle["evenement"] == EVT_ARMEMENT and restaurer.get("active"):
+        entites = list(dict.fromkeys(restaurer["entites"]))
+        if not entites:
+            raise vol.Invalid("restaurer_vide")
+        regle["restaurer"] = {"active": True, "entites": entites}
+    else:
+        regle["restaurer"] = {"active": False, "entites": []}
     verif = regle["verification"]
     if verif:
         _migrer_verification(verif, message_defaut)
@@ -371,7 +415,7 @@ def textes_modeles(regle: dict) -> list[str]:
     ]
 
 
-_CODES = {"texte_requis", "entite_invalide", "action_invalide", "action_inconnue", "regle_invalide"}
+_CODES = {"texte_requis", "entite_invalide", "action_invalide", "action_inconnue", "regle_invalide", "restaurer_domaine"}
 
 
 def sequence_actions(actions: list[dict], ctx: Contexte | None = None) -> list[dict]:
@@ -554,3 +598,86 @@ def normaliser_types(liste: list) -> list[dict]:
     if TYPE_DEFAUT not in vus:
         types.append({"id": TYPE_DEFAUT, "nom": None, "icone": ICONES_CATEGORIES[TYPE_DEFAUT]})
     return types
+
+
+# ---------------------------------------------------------------- remise en état au désarmement
+
+
+def entites_a_restaurer(regle: dict) -> list[str]:
+    """Entités dont l'état est mémorisé avant que la règle agisse (règles d'armement seulement)."""
+    r = regle.get("restaurer") or {}
+    if regle.get("evenement") != EVT_ARMEMENT or not r.get("active"):
+        return []
+    return [e for e in r.get("entites") or [] if _domaine(e) in DOMAINES_RESTAURABLES]
+
+
+def _valeur_json(valeur: Any) -> Any:
+    """Attribut enregistrable sur disque (les tuples deviennent des listes, le reste est écarté)."""
+    if isinstance(valeur, (str, int, float, bool)) or valeur is None:
+        return valeur
+    if isinstance(valeur, (list, tuple)) and len(valeur) <= 5 and all(isinstance(v, (int, float)) for v in valeur):
+        return list(valeur)
+    return None
+
+
+def photographier(lire, entites: list[str]) -> dict[str, dict]:
+    """État et attributs utiles de chaque entité. lire(entity_id) -> State | None.
+
+    Les entités absentes, inconnues ou indisponibles sont ignorées : il n'y aurait rien de fiable à remettre.
+    """
+    photo: dict[str, dict] = {}
+    for entity_id in entites:
+        etat = lire(entity_id)
+        if etat is None or etat.state in ("unknown", "unavailable"):
+            continue
+        attributs = {}
+        for cle in ATTRIBUTS_RESTAURES.get(_domaine(entity_id), ()):
+            valeur = _valeur_json(etat.attributes.get(cle))
+            if valeur is not None:
+                attributs[cle] = valeur
+        photo[entity_id] = {"state": str(etat.state)[:255], "attributes": attributs}
+    return photo
+
+
+def memoire_valide(memoire: Any) -> dict | None:
+    """Relit une mémoire enregistrée sur disque ; renvoie None si elle est abîmée."""
+    if not isinstance(memoire, dict) or not isinstance(memoire.get("etats"), dict):
+        return None
+    etats: dict[str, dict] = {}
+    for entity_id, valeur in list(memoire["etats"].items())[:RESTAURER_MAX]:
+        try:
+            entity_id = _entite_restaurable(entity_id)
+        except vol.Invalid:
+            continue
+        if not isinstance(valeur, dict) or not isinstance(valeur.get("state"), str):
+            continue
+        attributs = valeur.get("attributes") if isinstance(valeur.get("attributes"), dict) else {}
+        permis = ATTRIBUTS_RESTAURES.get(_domaine(entity_id), ())
+        etats[entity_id] = {
+            "state": valeur["state"][:255],
+            "attributes": {k: v for k, v in attributs.items() if k in permis and _valeur_json(v) is not None},
+        }
+    return {"date": str(memoire.get("date") or ""), "etats": etats}
+
+
+def scene_a_rejouer(memoires: dict[str, dict], regles: list[dict]) -> tuple[dict[str, dict], dict[str, int]]:
+    """Entités à passer à scene.apply et nombre d'entités remises par règle.
+
+    Seules comptent les règles qui existent encore avec l'option active, et les entités encore dans leur liste.
+    Une entité mémorisée par plusieurs règles reprend l'état de la mémoire la plus ancienne.
+    """
+    par_id = {r["id"]: r for r in regles if r.get("id")}
+    scene: dict[str, dict] = {}
+    comptes: dict[str, int] = {}
+    for regle_id, memoire in sorted(memoires.items(), key=lambda m: m[1].get("date") or ""):
+        regle = par_id.get(regle_id)
+        voulues = set(entites_a_restaurer(regle)) if regle else set()
+        n = 0
+        for entity_id, valeur in memoire.get("etats", {}).items():
+            if entity_id not in voulues:
+                continue
+            n += 1
+            scene.setdefault(entity_id, {"state": valeur["state"], **valeur.get("attributes", {})})
+        if n:
+            comptes[regle_id] = n
+    return scene, comptes

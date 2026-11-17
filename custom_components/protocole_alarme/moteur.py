@@ -41,6 +41,7 @@ from .const import (
     RES_ERREUR,
     RES_OK,
     RES_PAUSE,
+    RES_RESTAUREE,
     RES_VERIF_ECHEC,
     RES_VERIF_OK,
     SIGNAL_MAJ,
@@ -50,7 +51,8 @@ _LOGGER = logging.getLogger(__name__)
 
 EVT_TEST = "test"
 # Résultats montrés sur la carte : la règle a réellement agi (ou sa vérification a abouti)
-RESULTATS_CARTE = {RES_OK, RES_ERREUR, RES_VERIF_OK, RES_VERIF_ECHEC}
+DELAI_REMISE_S = 60  # la remise en état ne bloque jamais les règles de désarmement plus longtemps
+RESULTATS_CARTE = {RES_OK, RES_ERREUR, RES_VERIF_OK, RES_VERIF_ECHEC, RES_RESTAUREE}
 
 # Message envoyé quand une vérification échoue (modifiable dans le panneau, même syntaxe)
 MESSAGE_ECHEC_DEFAUT = {
@@ -74,6 +76,7 @@ class Moteur:
         self.derniere_execution: dict | None = None
         self.echec_verification: bool = False
         self._taches: dict[str, set[asyncio.Task]] = {EVT_ARMEMENT: set(), EVT_DESARMEMENT: set(), EVT_TEST: set()}
+        self.memoires: dict[str, dict] = {}
         self._desabonner = None
         self._desabonner_surveillance = None
         self._regles_en_cours: set[str] = set()
@@ -101,6 +104,12 @@ class Moteur:
         self.tolerees: set[str] = set(donnees.get("tolerees", []))
         self.derniere_execution = donnees.get("derniere_execution")
         self.echec_verification = bool(donnees.get("echec_verification", False))
+        # États mémorisés à l'armement, à remettre au désarmement : {regle_id: {date, etats}}
+        self.memoires: dict[str, dict] = {}
+        for regle_id, memoire in (donnees.get("memoires") or {}).items():
+            propre = R.memoire_valide(memoire)
+            if propre and propre["etats"]:
+                self.memoires[str(regle_id)] = propre
         if self._migrer():
             await self.store.async_save(self._a_sauver())
         if self.alarme:
@@ -147,6 +156,7 @@ class Moteur:
             "tolerees": sorted(self.tolerees),
             "derniere_execution": self.derniere_execution,
             "echec_verification": self.echec_verification,
+            "memoires": self.memoires,
         }
 
     @callback
@@ -173,6 +183,8 @@ class Moteur:
         if evenement == EVT_ARMEMENT:
             self.dernier_mode = nouveau
             self.arme_depuis = dt_util.utcnow()
+            # Nouvel armement : les mémoires d'un cycle précédent (désarmé pendant un arrêt de HA) sont oubliées
+            self.memoires = {}
             # Règles « ignorer si déjà vrai à l'armement » : on retient celles dont la condition est déjà vraie
             self.tolerees = {
                 r["id"] for r in self.regles
@@ -185,6 +197,8 @@ class Moteur:
             self.tolerees = set()
             self._sauver()
         if not self.actif:
+            self.memoires = {}
+            self._sauver()
             self._noter(None, evenement, RES_PAUSE, "")
             return
         self.async_lancer(evenement, self.dernier_mode, Context(parent_id=event.context.id))
@@ -195,9 +209,62 @@ class Moteur:
         inverse = EVT_DESARMEMENT if evenement == EVT_ARMEMENT else EVT_ARMEMENT
         for tache in list(self._taches[inverse]):
             tache.cancel()
+        if evenement == EVT_DESARMEMENT and self.memoires:
+            # Remise en état d'abord, puis les règles de désarmement (qui ont ainsi le dernier mot)
+            tache = self.entry.async_create_background_task(
+                self.hass, self._desarmer(mode, contexte or Context()), f"{DOMAIN} remise en état"
+            )
+            self._taches[EVT_DESARMEMENT].add(tache)
+            tache.add_done_callback(self._taches[EVT_DESARMEMENT].discard)
+            return
+        self._lancer_regles(evenement, mode, contexte)
+
+    @callback
+    def _lancer_regles(self, evenement: str, mode: str | None, contexte: Context | None) -> None:
         for regle in self.regles:
             if R.concerne(regle, evenement, mode):
-                self._demarrer_tache(copy.deepcopy(regle), evenement, mode, contexte)
+                copie = copy.deepcopy(regle)
+                if evenement == EVT_ARMEMENT:
+                    self._photographier(copie)
+                self._demarrer_tache(copie, evenement, mode, contexte)
+
+    @callback
+    def _photographier(self, regle: dict) -> None:
+        """Photo prise avant tout service appelé (fonction synchrone) ; gardée si la règle s'exécute.
+
+        Une règle déjà mémorisée pendant cet armement garde sa première photo (l'état d'avant l'alarme).
+        """
+        entites = R.entites_a_restaurer(regle)
+        if entites and regle["id"] not in self.memoires:
+            regle["_photo"] = R.photographier(self.hass.states.get, entites)
+
+    async def _desarmer(self, mode: str | None, contexte: Context) -> None:
+        try:
+            await self.async_restaurer(contexte)
+        finally:
+            self._lancer_regles(EVT_DESARMEMENT, mode, contexte)
+
+    async def async_restaurer(self, contexte: Context | None = None) -> None:
+        """Remet les entités mémorisées dans leur état d'avant l'armement, puis vide la mémoire."""
+        memoires, self.memoires = self.memoires, {}
+        self._sauver()
+        scene, comptes = R.scene_a_rejouer(memoires, self.regles)
+        scene = {e: v for e, v in scene.items() if self.hass.states.get(e) is not None}
+        if not scene:
+            self._signaler()
+            return
+        try:
+            async with asyncio.timeout(DELAI_REMISE_S):
+                await self.hass.services.async_call(
+                    "scene", "apply", {"entities": scene}, blocking=True, context=contexte or Context()
+                )
+        except (vol.Invalid, HomeAssistantError, ValueError, TimeoutError) as err:
+            _LOGGER.warning("Remise en état au désarmement : %s", err)
+            for regle_id in comptes:
+                self._noter(self.regle(regle_id), EVT_DESARMEMENT, RES_ERREUR, str(err))
+            return
+        for regle_id, n in comptes.items():
+            self._noter(self.regle(regle_id), EVT_DESARMEMENT, RES_RESTAUREE, str(n))
 
     def _demarrer_tache(
         self, regle: dict, evenement: str, mode: str | None, contexte: Context | None = None,
@@ -250,8 +317,10 @@ class Moteur:
                 and not (regle.get("grace_s") and depuis is not None and depuis < regle["grace_s"])
                 and R.doit_declencher(regle, entity_id, ancien, nouveau, regle["id"] in self.tolerees, self._etat)
             ):
+                copie = copy.deepcopy(regle)
+                self._photographier(copie)
                 self._demarrer_tache(
-                    copy.deepcopy(regle), EVT_SURVEILLANCE, etat_alarme,
+                    copie, EVT_SURVEILLANCE, etat_alarme,
                     Context(parent_id=event.context.id), groupe=EVT_ARMEMENT, declencheur=entity_id,
                 )
 
@@ -294,6 +363,11 @@ class Moteur:
         if not ok:
             self._noter(regle, evenement, RES_CONDITION, detail)
             return
+        photo = regle.pop("_photo", None)
+        if photo and regle.get("id") and regle["id"] not in self.memoires:
+            self.memoires[regle["id"]] = {"date": dt_util.utcnow().isoformat(), "etats": photo}
+            self._sauver()
+            self._signaler()
         # {{ entite }} : l'entité qui a déclenché la règle, sinon celle de la première condition
         entite = declencheur or next((c["entity_id"] for c in regle.get("conditions") or []), None)
         variables = {
@@ -585,6 +659,10 @@ class Moteur:
             "echec_verification": self.echec_verification,
             "en_cours": sum(len(t) for t in self._taches.values()),
         }
+
+    def memoires_public(self) -> dict[str, dict]:
+        """Pour le panneau : date de la photo et nombre d'entités, par règle."""
+        return {rid: {"date": m.get("date"), "n": len(m.get("etats") or {})} for rid, m in self.memoires.items()}
 
     # ------------------------------------------------------------------ carte du tableau de bord
 

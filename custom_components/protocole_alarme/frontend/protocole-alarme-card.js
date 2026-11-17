@@ -7,7 +7,7 @@ const TEXTES = {
     verif_ok_court: "vérification OK", verif_echec_court: "vérification en échec",
     regles: "Règles exécutées", aucune: "Aucune règle n'a agi.", depuis_arm: "Armement à {h}", depuis_des: "Désarmement à {h}",
     pendant: "pendant l'armement", capteurs: "Capteurs", panneau: "Règles", panneau_aide: "Ouvrir les règles de Protocole Alarme", indisponible: "Alarme indisponible",
-    res_ok: "Exécutée", res_erreur: "Erreur", res_verif_ok: "Vérification OK", res_verif_echec: "Vérification en échec",
+    res_ok: "Exécutée", res_erreur: "Erreur", res_verif_ok: "Vérification OK", res_verif_echec: "Vérification en échec", res_restauree: "État remis ({n} entités)", res_restauree_1: "État remis (1 entité)",
     pause: "Protocole en pause : aucune règle ne s'exécute.", choisir_alarme: "Choisissez une alarme dans la configuration de la carte.",
     etats: { disarmed: "Désarmée", armed_away: "Armée · Absent", armed_night: "Armée · Nuit", armed_home: "Armée · Présent",
       armed_vacation: "Armée · Vacances", armed_custom_bypass: "Armée · Personnalisé", arming: "Armement…", pending: "En attente…",
@@ -26,7 +26,7 @@ const TEXTES = {
     verif_ok_court: "check OK", verif_echec_court: "check failed",
     regles: "Rules that ran", aucune: "No rule has acted.", depuis_arm: "Armed at {h}", depuis_des: "Disarmed at {h}",
     pendant: "while armed", capteurs: "Sensors", panneau: "Rules", panneau_aide: "Open the Protocole Alarme rules", indisponible: "Alarm unavailable",
-    res_ok: "Ran", res_erreur: "Error", res_verif_ok: "Check OK", res_verif_echec: "Check failed",
+    res_ok: "Ran", res_erreur: "Error", res_verif_ok: "Check OK", res_verif_echec: "Check failed", res_restauree: "State restored ({n} entities)", res_restauree_1: "State restored (1 entity)",
     pause: "Protocol paused: no rule runs.", choisir_alarme: "Choose an alarm in the card configuration.",
     etats: { disarmed: "Disarmed", armed_away: "Armed · Away", armed_night: "Armed · Night", armed_home: "Armed · Home",
       armed_vacation: "Armed · Vacation", armed_custom_bypass: "Armed · Custom", arming: "Arming…", pending: "Pending…",
@@ -50,7 +50,7 @@ const MODES = [
   ["armed_vacation", 32, "alarm_arm_vacation", "mdi:shield-airplane"],
   ["armed_custom_bypass", 16, "alarm_arm_custom_bypass", "mdi:security"],
 ];
-const ICONES_RES = { ok: ["mdi:check-circle", "vert"], verif_ok: ["mdi:check-decagram", "vert"], verif_echec: ["mdi:alert", "orange"], erreur: ["mdi:alert-circle", "rouge"] };
+const ICONES_RES = { restauree: ["mdi:backup-restore", "violet"], ok: ["mdi:check-circle", "vert"], verif_ok: ["mdi:check-decagram", "vert"], verif_echec: ["mdi:alert", "orange"], erreur: ["mdi:alert-circle", "rouge"] };
 const ARMES = new Set(MODES.map(([m]) => m));
 
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -193,9 +193,9 @@ class ProtocoleAlarmeCard extends HTMLElement {
         if (prec) prec.verif = e.resultat; else lignes.push({ ...e, verif: verif ? e.resultat : null, seule: verif });
       }
       const html = lignes.reverse().map((e) => {
-        const res = e.verif === "verif_echec" ? "verif_echec" : e.resultat === "erreur" ? "erreur" : e.seule ? e.verif : "ok";
+        const res = e.verif === "verif_echec" ? "verif_echec" : e.resultat === "erreur" ? "erreur" : e.resultat === "restauree" ? "restauree" : e.seule ? e.verif : "ok";
         const [ic, coul] = ICONES_RES[res] || ["mdi:circle-small", "gris"];
-        const details = [e.seule ? this._t(`res_${e.verif}`) : this._t(`res_${e.resultat}`)];
+        const details = [e.seule ? this._t(`res_${e.verif}`) : e.resultat === "restauree" ? this._t(e.detail === "1" ? "res_restauree_1" : "res_restauree", { n: e.detail }) : this._t(`res_${e.resultat}`)];
         if (e.verif && !e.seule) details.push(this._t(`${e.verif}_court`));
         if (e.evenement === "surveillance") details.push(this._t("pendant"));
         details.push(this._heure(e.date));
@@ -442,7 +442,7 @@ const STYLE = `
   li { display: grid; grid-template-columns: 24px 1fr; column-gap: 10px; padding: 6px 0; border-top: 1px solid var(--divider-color, #eee); }
   li ha-icon { grid-row: span 2; align-self: center; }
   .nom-regle { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  ha-icon.vert, ha-state-icon.vert { color: var(--vert); } ha-icon.rouge { color: var(--rouge); } ha-icon.orange, ha-state-icon.orange, .val.orange { color: var(--orange); }
+  ha-icon.violet { color: #8e44ad; } ha-icon.vert, ha-state-icon.vert { color: var(--vert); } ha-icon.rouge { color: var(--rouge); } ha-icon.orange, ha-state-icon.orange, .val.orange { color: var(--orange); }
   .pastilles { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
   .capteur { font: inherit; cursor: pointer; color: var(--primary-text-color); background: var(--card-background-color, #fff); border: 1px solid var(--divider-color, #e0e0e0); }
   .capteur:hover { background: var(--secondary-background-color, #f5f5f5); }
