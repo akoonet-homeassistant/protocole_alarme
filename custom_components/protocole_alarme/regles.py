@@ -8,6 +8,7 @@ from __future__ import annotations
 import copy
 import re
 import uuid
+from dataclasses import dataclass, field
 from typing import Any
 
 import voluptuous as vol
@@ -30,6 +31,21 @@ DONNEES_CRITIQUES = {
 }
 
 IMPULSION = "impulsion"
+TITRE_DEFAUT = "Protocole Alarme"
+MESSAGE_ECHEC_FR = "⚠️ « {{ regle }} » : {{ entite }} est {{ etat_actuel }} au lieu de {{ etat_attendu }}."
+
+# Types de règle (classement dans le panneau)
+CATEGORIES = ["volets", "intrusion", "acces", "lumieres", "chauffage", "notifications", "autres"]
+
+
+@dataclass(frozen=True)
+class Contexte:
+    """Ce que Home Assistant sait au moment de construire le script."""
+
+    entite_ls: str | None = None  # sélecteur « Mode » de Lights Simulator
+    options_ls: list | None = None
+    alarme: str | None = None  # alarme suivie
+    entites_notify: frozenset[str] = field(default_factory=frozenset)  # entités notify.* (Telegram…)
 
 _ONOFF = {"allumer": ("turn_on", ()), "eteindre": ("turn_off", ())}
 _ONOFF_IMPULSION = {**_ONOFF, IMPULSION: ("", ("duree",))}
@@ -107,7 +123,7 @@ def _domaine(entity_id: str) -> str:
 
 # Mêmes règles que Home Assistant : domaine.objet, minuscules, chiffres et « _ »
 _RE_ENTITE = re.compile(r"^(?!.+__)(?!_)[\da-z_]+(?<!_)\.(?!_)[\da-z_]+(?<!_)$")
-_RE_NOTIFY = re.compile(r"^notify\.[\da-z_]+$")
+_RE_NOTIFY = re.compile(r"^notify\.[\da-z_]+$")  # service notify.x ou entité notify.x
 _RE_ID = re.compile(r"^[\da-z]{1,32}$")
 
 
@@ -156,6 +172,7 @@ SCHEMA_VERIFICATION = vol.Schema(
         vol.Optional("notifier"): vol.Any(None, _texte(120, obligatoire=False)),
         vol.Optional("notifiers", default=list): [_texte(120)],
         vol.Optional("message"): vol.Any(None, _texte(500, obligatoire=False)),
+        vol.Optional("actions", default=list): vol.All([dict], vol.Length(max=20)),  # en cas d'échec
     },
     extra=vol.REMOVE_EXTRA,
 )
@@ -168,11 +185,13 @@ SCHEMA_REGLE = vol.Schema(
         vol.Required("evenement"): vol.In(EVENEMENTS),
         vol.Optional("modes", default=list): [vol.In(ETATS_ARMES)],
         vol.Optional("conditions", default=list): [SCHEMA_CONDITION],
-        vol.Optional("actions", default=list): [dict],
+        vol.Optional("actions", default=list): vol.All([dict], vol.Length(max=50)),
         vol.Optional("delai_s", default=0): _secondes(3600),
         vol.Optional("surveiller", default=False): bool,
         vol.Optional("grace_s", default=0): _secondes(600),
         vol.Optional("tolerer", default=False): bool,
+        vol.Optional("tolerer_si", default=None): vol.Any(None, SCHEMA_CONDITION),
+        vol.Optional("categorie", default=None): vol.Any(None, vol.In(CATEGORIES)),
         vol.Optional("verification", default=None): vol.Any(None, SCHEMA_VERIFICATION),
         vol.Optional("avance", default=False): bool,
         vol.Optional("sequence", default=list): vol.All([dict], vol.Length(max=SEQUENCE_MAX)),
@@ -258,8 +277,46 @@ def normaliser_action(brute: dict) -> dict:
     return {"type": TYPE_ENTITE, "entity_id": entity_id, "action": nom_action, "params": params}
 
 
-def normaliser(brute: dict) -> dict:
-    """Vérifie une règle envoyée par le panneau. Lève vol.Invalid avec un code."""
+def categorie_auto(regle: dict) -> str:
+    """Type proposé d'après les actions (le panneau permet de le changer)."""
+    actions = regle.get("actions") or []
+    types = {a.get("type") for a in actions}
+    domaines = {_domaine(a["entity_id"]) for a in actions if a.get("type") == TYPE_ENTITE and a.get("entity_id")}
+    if regle.get("avance") or not actions:
+        return "autres"
+    if TYPE_ALARME in types:
+        return "intrusion"
+    if "cover" in domaines:
+        return "volets"
+    if "light" in domaines or TYPE_SIMULATEUR in types:
+        return "lumieres"
+    if "lock" in domaines or any(a.get("action") == IMPULSION for a in actions):
+        return "acces"
+    if "climate" in domaines:
+        return "chauffage"
+    if types == {TYPE_NOTIFICATION}:
+        return "notifications"
+    return "autres"
+
+
+def _migrer_verification(verif: dict, message_defaut: str | None) -> None:
+    """Ancien format : liste « Prévenir » + message → action de notification (2026.11.8)."""
+    services = services_notification(verif.pop("notifiers", None) or [], verif.pop("notifier", None))
+    message = verif.pop("message", None)
+    if services and not verif.get("actions"):
+        verif["actions"] = [{
+            "type": TYPE_NOTIFICATION,
+            "services": services,
+            "action": "envoyer",
+            "params": {"message": message or message_defaut or MESSAGE_ECHEC_FR, "titre": TITRE_DEFAUT, "critique": False},
+        }]
+
+
+def normaliser(brute: dict, message_defaut: str | None = None) -> dict:
+    """Vérifie une règle envoyée par le panneau. Lève vol.Invalid avec un code.
+
+    message_defaut : message d'échec utilisé pour convertir l'ancien format de vérification.
+    """
     try:
         regle = SCHEMA_REGLE(copy.deepcopy(brute))
     except vol.MultipleInvalid as err:
@@ -280,30 +337,48 @@ def normaliser(brute: dict) -> dict:
             regle["surveiller"] = False
         elif not regle["conditions"]:
             raise vol.Invalid("surveiller_condition")
+    if not (regle["surveiller"] and regle["tolerer"]):
+        regle["tolerer_si"] = None
+    if not regle["surveiller"]:
+        regle["tolerer"] = False
+        regle["grace_s"] = 0
+    regle["categorie"] = regle["categorie"] or categorie_auto(regle)
     verif = regle["verification"]
     if verif:
-        verif["notifiers"] = services_notification(verif.get("notifiers") or [], verif.pop("notifier", None))
+        _migrer_verification(verif, message_defaut)
+        verif["actions"] = [normaliser_action(a) for a in verif["actions"]]
     if verif and verif["active"] and not (verif.get("entity_id") and verif.get("etat")):
         raise vol.Invalid("verification_incomplete")
     return regle
 
 
+def textes_modeles(regle: dict) -> list[str]:
+    """Messages et titres de notification (modèles Home Assistant) à vérifier avant d'enregistrer."""
+    actions = [*(regle.get("actions") or []), *((regle.get("verification") or {}).get("actions") or [])]
+    return [
+        texte
+        for a in actions if a.get("type") == TYPE_NOTIFICATION
+        for texte in (a["params"].get("message"), a["params"].get("titre")) if texte
+    ]
+
+
 _CODES = {"texte_requis", "entite_invalide", "action_invalide", "action_inconnue", "regle_invalide"}
 
 
-def sequence_simple(
-    regle: dict, entite_ls: str | None = None, options_ls: list | None = None, alarme: str | None = None
-) -> list[dict]:
-    """Traduit les actions du mode simple en étapes de script Home Assistant."""
+def sequence_actions(actions: list[dict], ctx: Contexte | None = None) -> list[dict]:
+    """Traduit des actions du mode simple en étapes de script Home Assistant."""
+    ctx = ctx or Contexte()
     etapes: list[dict] = []
-    for action in regle["actions"]:
-        etapes.extend(_etapes_action(action, entite_ls, options_ls, alarme))
+    for action in actions:
+        etapes.extend(_etapes_action(action, ctx))
     return etapes
 
 
-def sequence_complete(
-    regle: dict, entite_ls: str | None = None, options_ls: list | None = None, alarme: str | None = None
-) -> list[dict]:
+def sequence_simple(regle: dict, ctx: Contexte | None = None) -> list[dict]:
+    return sequence_actions(regle["actions"], ctx)
+
+
+def sequence_complete(regle: dict, ctx: Contexte | None = None) -> list[dict]:
     """Script complet de la règle : délai éventuel puis actions (simples ou avancées)."""
     etapes: list[dict] = []
     if regle.get("delai_s"):
@@ -311,22 +386,23 @@ def sequence_complete(
     if regle.get("avance"):
         etapes.extend(copy.deepcopy(regle["sequence"]))
     else:
-        etapes.extend(sequence_simple(regle, entite_ls, options_ls, alarme))
+        etapes.extend(sequence_simple(regle, ctx))
     return etapes
 
 
-def _etapes_action(action: dict, entite_ls: str | None, options_ls: list | None, alarme: str | None = None) -> list[dict]:
+def _etapes_action(action: dict, ctx: Contexte) -> list[dict]:
     type_action = action["type"]
     if type_action == TYPE_ALARME:
-        if not alarme:
+        if not ctx.alarme:
             raise ErreurRegle("alarme_absente")
-        return [_appel(ACTIONS_ALARME[action["action"]], alarme)]
+        return [_appel(ACTIONS_ALARME[action["action"]], ctx.alarme)]
     if type_action == TYPE_SIMULATEUR:
-        if not entite_ls:
+        if not ctx.entite_ls:
             raise ErreurRegle("simulateur_absent")
         index = LS_INDEX_MODE[action["action"]]
-        option = options_ls[index] if options_ls and len(options_ls) > index else LS_LIBELLES_MODE[action["action"]]
-        return [_appel("select.select_option", entite_ls, {"option": option})]
+        options = ctx.options_ls
+        option = options[index] if options and len(options) > index else LS_LIBELLES_MODE[action["action"]]
+        return [_appel("select.select_option", ctx.entite_ls, {"option": option})]
 
     if type_action == TYPE_NOTIFICATION:
         params = action["params"]
@@ -336,6 +412,10 @@ def _etapes_action(action: dict, entite_ls: str | None, options_ls: list | None,
         services = action.get("services") or [action["service"]]
         etapes = []
         for service in services:
+            if service in ctx.entites_notify:
+                # Entité de notification (Telegram…) : notify.send_message, sans options propres aux téléphones
+                etapes.append(_appel("notify.send_message", service, dict(donnees)))
+                continue
             donnees_service = dict(donnees)
             if params.get("critique") and service != "persistent_notification":
                 donnees_service["data"] = copy.deepcopy(DONNEES_CRITIQUES)
@@ -395,12 +475,13 @@ ETATS_INCONNUS = {None, "unknown", "unavailable"}
 
 def entites_surveillees(regles: list[dict]) -> set[str]:
     """Entités des conditions des règles qui surveillent aussi pendant l'armement."""
-    return {
-        c["entity_id"]
-        for r in regles
-        if r.get("actif", True) and r.get("surveiller") and r.get("evenement") == EVT_ARMEMENT
-        for c in r.get("conditions") or []
-    }
+    entites: set[str] = set()
+    for r in regles:
+        if r.get("actif", True) and r.get("surveiller") and r.get("evenement") == EVT_ARMEMENT:
+            entites.update(c["entity_id"] for c in r.get("conditions") or [])
+            if r.get("tolerer") and r.get("tolerer_si"):
+                entites.add(r["tolerer_si"]["entity_id"])
+    return entites
 
 
 def declenchee_pendant(regle: dict, entity_id: str, ancien: str | None, nouveau: str | None) -> bool:
@@ -408,3 +489,25 @@ def declenchee_pendant(regle: dict, entity_id: str, ancien: str | None, nouveau:
     if not regle.get("surveiller") or ancien in ETATS_INCONNUS or ancien == nouveau:
         return False
     return any(c["entity_id"] == entity_id and c["etat"] == nouveau for c in regle.get("conditions") or [])
+
+
+def tolerance_tient(regle: dict, lire_etat) -> bool:
+    """« Tolérer seulement si… » : la condition de tolérance est-elle vraie (toujours vrai sans condition) ?"""
+    si = regle.get("tolerer_si") if regle.get("tolerer") else None
+    return si is None or lire_etat(si["entity_id"]) == si["etat"]
+
+
+def doit_declencher(regle: dict, entity_id: str, ancien: str | None, nouveau: str | None, toleree: bool, lire_etat) -> bool:
+    """Pendant l'armement : la règle doit-elle s'exécuter après ce changement d'état ?
+
+    toleree : la condition de la règle était déjà vraie à l'armement et « ignorer si déjà le cas » est coché.
+    """
+    if not regle.get("surveiller"):
+        return False
+    if declenchee_pendant(regle, entity_id, ancien, nouveau):
+        return not toleree or not tolerance_tient(regle, lire_etat)
+    si = regle.get("tolerer_si") if regle.get("tolerer") else None
+    if toleree and si and entity_id == si["entity_id"] and ancien == si["etat"] and nouveau != si["etat"]:
+        # La tolérance tombe (ex. volet rouvert alors que la fenêtre est ouverte)
+        return nouveau not in ETATS_INCONNUS and conditions_remplies(regle, lire_etat)[0]
+    return False

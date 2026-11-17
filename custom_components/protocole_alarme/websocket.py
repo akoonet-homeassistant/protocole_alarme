@@ -32,7 +32,9 @@ def _moteur(hass: HomeAssistant) -> Moteur | None:
 def _services_notification(hass: HomeAssistant) -> list[str]:
     services = [f"notify.{nom}" for nom in sorted(hass.services.async_services_for_domain("notify"))]
     services = [s for s in services if s != "notify.send_message"]
-    return ["persistent_notification", *services]
+    # Entités de notification (Telegram, e-mail…) : envoyées par notify.send_message
+    entites = sorted(e for e in hass.states.async_entity_ids("notify") if e not in services)
+    return ["persistent_notification", *services, *entites]
 
 
 async def _utilisateurs(hass: HomeAssistant) -> list[dict]:

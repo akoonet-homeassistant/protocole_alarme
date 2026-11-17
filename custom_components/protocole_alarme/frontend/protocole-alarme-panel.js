@@ -13,11 +13,11 @@ const ICONES = {
   lock: "mdi:lock", climate: "mdi:thermostat", media_player: "mdi:cast", scene: "mdi:palette", script: "mdi:script-text",
   automation: "mdi:robot", select: "mdi:format-list-bulleted", input_select: "mdi:format-list-bulleted", valve: "mdi:valve",
   binary_sensor: "mdi:checkbox-blank-circle-outline", sensor: "mdi:eye", person: "mdi:account", device_tracker: "mdi:map-marker",
-  simulateur: "mdi:home-lightbulb", notification: "mdi:bell-ring", alarm_control_panel: "mdi:shield-home",
+  simulateur: "mdi:home-lightbulb", notification: "mdi:bell-ring", alarm_control_panel: "mdi:shield-home", alarme: "mdi:alarm-light",
 };
 const COULEURS = {
   cover: "bleu", light: "jaune", switch: "gris", input_boolean: "gris", lock: "vert", climate: "orange", binary_sensor: "orange",
-  simulateur: "jaune", notification: "violet", scene: "violet", script: "violet", automation: "violet",
+  simulateur: "jaune", notification: "violet", alarme: "orange", alarm_control_panel: "orange", scene: "violet", script: "violet", automation: "violet",
 };
 const ICONES_CLASSE = {
   door: "mdi:door", garage_door: "mdi:garage", window: "mdi:window-closed-variant", opening: "mdi:square-rounded-outline",
@@ -29,6 +29,29 @@ const ICONES_CLASSE = {
   shutter: "mdi:window-shutter", blind: "mdi:blinds", garage: "mdi:garage", gate: "mdi:gate", curtain: "mdi:curtains",
   outlet: "mdi:power-socket-fr",
 };
+const CATEGORIES = [
+  ["volets", "mdi:window-shutter"], ["intrusion", "mdi:alarm-light"], ["acces", "mdi:garage-variant"],
+  ["lumieres", "mdi:lightbulb-group"], ["chauffage", "mdi:thermostat"], ["notifications", "mdi:bell-ring"], ["autres", "mdi:shape-outline"],
+];
+const TITRE_DEFAUT = "Protocole Alarme";
+
+// Même logique que regles.categorie_auto côté serveur
+const CLES_CATEGORIES = new Set(CATEGORIES.map(([c]) => c));
+const categorieDe = (r) => (CLES_CATEGORIES.has(r.categorie) ? r.categorie : categorieAuto(r));
+const categorieAuto = (r) => {
+  const actions = r.actions || [];
+  if (r.avance || !actions.length) return "autres";
+  const types = new Set(actions.map((a) => a.type));
+  const domaines = new Set(actions.filter((a) => a.type === "entite" && a.entity_id).map((a) => a.entity_id.split(".")[0]));
+  if (types.has("alarme")) return "intrusion";
+  if (domaines.has("cover")) return "volets";
+  if (domaines.has("light") || types.has("simulateur")) return "lumieres";
+  if (domaines.has("lock") || actions.some((a) => a.action === "impulsion")) return "acces";
+  if (domaines.has("climate")) return "chauffage";
+  if (types.size === 1 && types.has("notification")) return "notifications";
+  return "autres";
+};
+
 const ICONE_EVENEMENT = { armement: "mdi:lock", desarmement: "mdi:lock-open-variant", test: "mdi:play", surveillance: "mdi:eye-outline" };
 
 const esc = (v) =>
@@ -157,15 +180,18 @@ class ProtocoleAlarmePanel extends HTMLElement {
   _nomService(s) {
     if (!s) return "";
     if (s === "persistent_notification") return "Home Assistant";
+    const entite = this._hass?.states?.[s];
+    if (entite) return entite.attributes?.friendly_name || s;  // entité de notification (Telegram…)
     const nom = s.replace("notify.", "").replace("mobile_app_", "").replaceAll("_", " ");
     return nom.charAt(0).toUpperCase() + nom.slice(1);
   }
   _servicesDe(action) { return action.services || (action.service ? [action.service] : []); }
-  _choixServices(choisis, nomAction, i) {
+  _choixServices(choisis, nomAction, i, L = "") {
     const services = this._d.notifications || [];
     return `<div class="chips">${services.map((s) => {
       const on = choisis.includes(s);
-      return `<button type="button" class="chip ${on ? "on" : ""}" aria-pressed="${on}" data-a="${nomAction}" data-i="${i}" data-v="${esc(s)}">${on ? '<ha-icon icon="mdi:check"></ha-icon>' : ""}${esc(this._nomService(s))}</button>`;
+      const icone = on ? "mdi:check" : this._hass?.states?.[s] ? "mdi:send" : "";
+      return `<button type="button" class="chip ${on ? "on" : ""}" aria-pressed="${on}" data-a="${nomAction}" data-i="${i}"${L} data-v="${esc(s)}">${icone ? `<ha-icon icon="${icone}"></ha-icon>` : ""}${esc(this._nomService(s))}</button>`;
     }).join("")}</div>`;
   }
   _libelleMode(m) { return MODES[this._langue][m] || m; }
@@ -198,6 +224,10 @@ class ProtocoleAlarmePanel extends HTMLElement {
       ? this.t("script_avance", { n: (regle.sequence || []).length })
       : (regle.actions || []).map((a) => `<b>${esc(this._libelleAction(a))}</b> ${a.type === "entite" ? esc(this._cible(a)) : this._cible(a)}${this._detailParams(a)}`).join(", ");
     return `${debut} → ${actions}`;
+  }
+  _tolererSiTexte(regle) {
+    const si = regle.tolerer_si;
+    return this.t("tolerer_si_court", { e: this._nomEntite(si.entity_id), s: String(this._etatLisible(si.entity_id, si.etat)).toLowerCase() });
   }
   _modesTexte(regle) {
     const modes = regle.modes || [];
@@ -238,31 +268,35 @@ class ProtocoleAlarmePanel extends HTMLElement {
         case "etape": await this._allerEtape(Number(d.v)); return;
         case "moment": b.evenement = d.v; if (d.v !== "armement") b.surveiller = false; break;
         case "surveiller": b.surveiller = !b.surveiller; break;
-        case "tolerer": b.tolerer = !b.tolerer; break;
-        case "critique": b.actions[i].params.critique = !b.actions[i].params.critique; break;
+        case "tolerer": b.tolerer = !b.tolerer; if (!b.tolerer) b.tolerer_si = null; break;
+        case "tolerer-si":
+          if (b.tolerer_si) { b.tolerer_si = null; break; }
+          this._ouvrirSelecteur("tolerer", null); return;
+        case "tolerer-si-entite": this._ouvrirSelecteur("tolerer", null); return;
+        case "tolerer-si-etat": b.tolerer_si.etat = d.v; break;
+        case "categorie": b.categorie = d.v; break;
+        case "critique": { const a = this._liste(d)[i]; a.params.critique = !a.params.critique; break; }
         case "mode": b.modes = b.modes.includes(d.v) ? b.modes.filter((m) => m !== d.v) : [...b.modes, d.v]; break;
         case "si": this._siCond = d.v === "1"; if (this._siCond && !b.conditions.length) this._ouvrirSelecteur("condition", null); break;
         case "ajouter-condition": this._ouvrirSelecteur("condition", null); return;
         case "changer-condition": this._ouvrirSelecteur("condition", i); return;
         case "etat-condition": b.conditions[i].etat = d.v; break;
         case "retirer-condition": b.conditions.splice(i, 1); if (!b.conditions.length) this._siCond = false; break;
-        case "ajouter-action": this._ouvrirSelecteur("action", null); return;
-        case "changer-action": this._ouvrirSelecteur("action", i); return;
-        case "choix-action": b.actions[i].action = d.v; this._paramsParDefaut(b.actions[i]); break;
-        case "retirer-action": b.actions.splice(i, 1); break;
-        case "verif": b.verification.active = !b.verification.active; this._completerVerif(); break;
+        case "ajouter-action": this._ouvrirSelecteur("action", null, d.l); return;
+        case "changer-action": this._ouvrirSelecteur("action", i, d.l); return;
+        case "choix-action": { const a = this._liste(d)[i]; a.action = d.v; this._paramsParDefaut(a); break; }
+        case "retirer-action": this._liste(d).splice(i, 1); break;
+        case "verif":
+          b.verification.active = !b.verification.active;
+          if (b.verification.active && !b.verification.actions.length) b.verification.actions.push(this._notifEchec());
+          this._completerVerif(); break;
         case "verif-entite": this._ouvrirSelecteur("verif", null); return;
         case "verif-etat": b.verification.etat = d.v; break;
-        case "verif-message-defaut": b.verification.message = null; break;
-        case "verif-notif": {
-          const l = b.verification.notifiers;
-          b.verification.notifiers = l.includes(d.v) ? l.filter((x) => x !== d.v) : [...l, d.v];
-          break;
-        }
         case "notif-service": {
-          const l = b.actions[i].services;
+          const a = this._liste(d)[i];
+          const l = a.services;
           if (l.includes(d.v) && l.length === 1) break;
-          b.actions[i].services = l.includes(d.v) ? l.filter((x) => x !== d.v) : [...l, d.v];
+          a.services = l.includes(d.v) ? l.filter((x) => x !== d.v) : [...l, d.v];
           break;
         }
         case "delai": b.delai_s = Math.max(0, Math.min(3600, (b.delai_s || 0) + Number(d.v))); break;
@@ -310,18 +344,17 @@ class ProtocoleAlarmePanel extends HTMLElement {
         this._minuterieRecherche = setTimeout(() => this._dessinerListe(), 120);
         break;
       case "yaml": this._yaml = c.value; break;
-      case "message": b.actions[i].params.message = c.value; break;
-      case "titre": b.actions[i].params.titre = c.value; break;
-      case "verif-message": {
-        b.verification.message = c.value.trim() === this._messageDefaut() ? null : c.value;
-        const apercu = this.shadowRoot.getElementById("apercu-message");
-        if (apercu) apercu.textContent = this._apercuMessage(b.verification);
+      case "message":
+      case "titre": {
+        this._liste(c.dataset)[i].params[c.dataset.f] = c.value;
+        const apercu = this.shadowRoot.getElementById(`apercu-${c.dataset.l || ""}${i}`);
+        if (apercu) apercu.textContent = this._apercu(this._liste(c.dataset)[i].params.message, c.dataset.l);
         break;
       }
       case "param": {
-        const action = b.actions[i];
+        const action = this._liste(c.dataset)[i];
         action.params[c.dataset.p] = c.type === "range" || c.type === "number" ? Number(c.value) : c.value;
-        const sortie = this.shadowRoot.getElementById(`val-${i}-${c.dataset.p}`);
+        const sortie = this.shadowRoot.getElementById(`val-${c.dataset.l || ""}${i}-${c.dataset.p}`);
         if (sortie) sortie.textContent = this._valeurParam(c.dataset.p, action.params[c.dataset.p]);
         break;
       }
@@ -336,11 +369,12 @@ class ProtocoleAlarmePanel extends HTMLElement {
     if (!c.dataset.f) return;
     const i = c.dataset.i !== undefined ? Number(c.dataset.i) : null;
     switch (c.dataset.f) {
-      case "param-select": b.actions[i].params[c.dataset.p] = c.value === "" ? undefined : c.value; break;
+      case "param-select": this._liste(c.dataset)[i].params[c.dataset.p] = c.value === "" ? undefined : c.value; break;
       case "etat-libre": b.conditions[i].etat = c.value.trim(); break;
       case "grace": b.grace_s = Math.max(0, Math.min(600, Number(c.value) || 0)); break;
       case "verif-delai": b.verification.delai_s = Math.max(0, Number(c.value) || 0); break;
       case "verif-etat-libre": b.verification.etat = c.value.trim(); break;
+      case "tolerer-si-libre": b.tolerer_si.etat = c.value.trim(); break;
       default: return;
     }
     this._dessiner();
@@ -364,12 +398,19 @@ class ProtocoleAlarmePanel extends HTMLElement {
 
   _regle(id) { return (this._d?.regles || []).find((r) => r.id === id); }
 
+  // Liste d'actions visée : actions de la règle, ou actions en cas d'échec de la vérification (data-l="v")
+  _liste(d) { return d?.l === "v" ? this._brouillon.verification.actions : this._brouillon.actions; }
+
   _regleVide(evenement = this._evenement) {
     return {
       nom: "", actif: true, evenement, modes: [], conditions: [], actions: [], delai_s: 0, grace_s: 0, tolerer: false,
-      verification: { active: false, delai_s: 45, entity_id: null, etat: null, notifiers: [this._notifParDefaut()], message: null },
+      tolerer_si: null, categorie: null,
+      verification: { active: false, delai_s: 45, entity_id: null, etat: null, actions: [] },
       avance: false, sequence: [],
     };
+  }
+  _notifEchec() {
+    return { type: "notification", services: [this._notifParDefaut()], action: "envoyer", params: { message: this._messageDefaut(), titre: TITRE_DEFAUT, critique: false } };
   }
   _notifParDefaut() {
     const liste = this._d?.notifications || [];
@@ -387,7 +428,7 @@ class ProtocoleAlarmePanel extends HTMLElement {
         r.conditions = [{ entity_id: "", etat: "on", _domaine: "binary_sensor" }];
         r.surveiller = true;
         r.actions = [action("switch", "impulsion", { duree: 1 })];
-        r.verification = { ...r.verification, active: true, delai_s: 45, etat: "off" };
+        r.verification = { ...r.verification, active: true, delai_s: 45, etat: "off", actions: [this._notifEchec()] };
         break;
       case "volet":
         r.nom = this._langue === "fr" ? "Volet si fenêtre ouverte" : "Shutter if window open";
@@ -432,9 +473,13 @@ class ProtocoleAlarmePanel extends HTMLElement {
   _ouvrirAssistant(regle) {
     if (!regle.verification) regle.verification = this._regleVide().verification;
     const v = regle.verification;
-    if (!Array.isArray(v.notifiers)) v.notifiers = v.notifier ? [v.notifier] : regle.id ? [] : [this._notifParDefaut()];
-    delete v.notifier;
-    for (const a of regle.actions || []) {
+    if (!Array.isArray(v.actions)) v.actions = [];
+    // Ancien format (avant 2026.11.8) : liste « Prévenir » → action de notification
+    const anciens = [...(v.notifiers || []), ...(v.notifier ? [v.notifier] : [])];
+    if (anciens.length && !v.actions.length) v.actions.push({ ...this._notifEchec(), services: anciens, params: { ...this._notifEchec().params, message: v.message || this._messageDefaut() } });
+    delete v.notifier; delete v.notifiers; delete v.message;
+    regle.tolerer_si = regle.tolerer_si || null;
+    for (const a of [...(regle.actions || []), ...v.actions]) {
       if (a.type === "notification" && !a.services) { a.services = a.service ? [a.service] : [this._notifParDefaut()]; delete a.service; }
     }
     this._brouillon = regle;
@@ -462,9 +507,10 @@ class ProtocoleAlarmePanel extends HTMLElement {
     const b = copie(this._brouillon);
     if (!this._siCond) b.conditions = [];
     b.conditions = b.conditions.map(({ entity_id, etat }) => ({ entity_id, etat }));
-    b.actions = b.actions.map((a) => { const { _domaine: _ignore, ...reste } = a; return reste; });
-    if (!b.verification?.active) b.verification = { ...b.verification, active: false };
-    if (b.verification && (!b.verification.message || b.verification.message.trim() === this._messageDefaut())) b.verification.message = null;
+    const propre = (a) => { const { _domaine: _ignore, ...reste } = a; return reste; };
+    b.actions = b.actions.map(propre);
+    b.verification = { ...b.verification, active: !!b.verification?.active, actions: (b.verification?.actions || []).map(propre) };
+    if (!b.surveiller || !b.tolerer) b.tolerer_si = null;
     return b;
   }
 
@@ -489,7 +535,7 @@ class ProtocoleAlarmePanel extends HTMLElement {
           await this._brouillonPret();
         } catch (err) { this._annoncer(this._texteErreur(err), true); return; }
         if (!b.avance && !b.actions.length) { this._annoncer(this.t("err.action_requise"), true); return; }
-        if (!b.avance && b.actions.some((a) => a.type === "entite" && !a.entity_id)) { this._annoncer(this.t("err.entite_invalide"), true); return; }
+        if (!b.avance && [...b.actions, ...(b.verification.active ? b.verification.actions : [])].some((a) => a.type === "entite" && !a.entity_id)) { this._annoncer(this.t("err.entite_invalide"), true); return; }
         if (b.verification.active && (!b.verification.entity_id || !b.verification.etat)) { this._annoncer(this.t("err.verification_incomplete"), true); return; }
       }
     }
@@ -557,16 +603,17 @@ class ProtocoleAlarmePanel extends HTMLElement {
 
   // ------------------------------------------------------------------ sélecteur d'entité
 
-  _ouvrirSelecteur(cible, index) {
+  _ouvrirSelecteur(cible, index, liste = null) {
     let domaine = null;
     const b = this._brouillon;
     if (cible === "condition" && index !== null) domaine = b.conditions[index]?._domaine || null;
-    if (cible === "action" && index !== null) domaine = b.actions[index]?._domaine || null;
+    if (cible === "action" && index !== null) domaine = this._liste({ l: liste })[index]?._domaine || null;
+    if (cible === "tolerer") domaine = "cover";
     const tri = (s) => (s.attributes.friendly_name || s.entity_id).toLowerCase();
     const base = Object.values(this._hass.states)
       .map((s) => ({ s, cle: `${tri(s)} ${s.entity_id}`, nom: tri(s) }))
       .sort((x, y) => x.nom.localeCompare(y.nom));
-    this._selecteur = { cible, index, recherche: "", domaine, base };
+    this._selecteur = { cible, index, liste, recherche: "", domaine, base };
     this._dessiner();
     setTimeout(() => this.shadowRoot.getElementById("recherche")?.focus(), 50);
   }
@@ -604,24 +651,28 @@ class ProtocoleAlarmePanel extends HTMLElement {
       }
       if (sel.index === null) b.conditions.push(cond); else b.conditions[sel.index] = cond;
       this._siCond = true;
+    } else if (sel.cible === "tolerer") {
+      const etats = this._etatsPossibles(valeur);
+      b.tolerer_si = { entity_id: valeur, etat: etats.includes("closed") ? "closed" : etats[0] || "" };
     } else if (sel.cible === "verif") {
       b.verification.entity_id = valeur;
       const etats = this._etatsPossibles(valeur);
       if (!etats.includes(b.verification.etat)) b.verification.etat = etats[0] || null;
     } else {
+      const liste = this._liste({ l: sel.liste });
       let action;
       if (valeur === "@simulateur") action = { type: "simulateur", action: "demarrer", params: {} };
       else if (valeur === "@alarme") action = { type: "alarme", action: "declencher", params: {} };
-      else if (valeur === "@notification") action = { type: "notification", services: [this._notifParDefaut()], action: "envoyer", params: { message: this.t("notif_defaut"), titre: "" } };
+      else if (valeur === "@notification") action = sel.liste === "v" ? this._notifEchec() : { type: "notification", services: [this._notifParDefaut()], action: "envoyer", params: { message: this.t("notif_defaut"), titre: "" } };
       else {
         const actions = Object.keys(this._d.catalogue[domaineDe(valeur)] || {});
-        const ancienne = sel.index !== null ? b.actions[sel.index] : null;
+        const ancienne = sel.index !== null ? liste[sel.index] : null;
         const voulue = ancienne && actions.includes(ancienne.action) ? ancienne.action : actions[0];
         action = { type: "entite", entity_id: valeur, action: voulue, params: { ...(ancienne?.params || {}) } };
         this._paramsParDefaut(action);
         if (ancienne?.params?.duree && action.action === "impulsion") action.params.duree = ancienne.params.duree;
       }
-      if (sel.index === null) b.actions.push(action); else b.actions[sel.index] = action;
+      if (sel.index === null) liste.push(action); else liste[sel.index] = action;
     }
     this._selecteur = null;
     this._completerVerif();
@@ -709,14 +760,19 @@ class ProtocoleAlarmePanel extends HTMLElement {
     if (!d.instantane.actif) avert.push(`<div class="bandeau orange">${this.t("protocole_pause")}</div>`);
     if (utiliseLs && ls.double_pilotage) avert.push(`<div class="bandeau orange">${this.t("ls_double")}</div>`);
     if (utiliseLs && ls.statut !== "pret") avert.push(`<div class="bandeau orange">${this.t("err.simulateur_absent")}</div>`);
-    const cartes = liste.map((r) => this._carteRegle(r)).join("") || `<div class="carte vide">${this.t("aucune_regle")}</div>`;
+    const groupes = CATEGORIES.map(([c, icone]) => [c, icone, liste.filter((r) => categorieDe(r) === c)]).filter(([, , rs]) => rs.length);
+    const cartes = groupes.map(([c, icone, rs]) => `
+      <section class="groupe">
+        <h3 class="titre-groupe"><ha-icon icon="${icone}"></ha-icon>${this.t(`cat_${c}`)}<span class="nb">${rs.length}</span></h3>
+        <div class="pile">${rs.map((r) => this._carteRegle(r)).join("")}</div>
+      </section>`).join("") || `<div class="carte vide">${this.t("aucune_regle")}</div>`;
     return `
       ${avert.join("")}
       <div class="seg" role="tablist">
         ${["armement", "desarmement"].map((ev) => `<button type="button" role="tab" aria-selected="${ev === this._evenement}" class="${ev === this._evenement ? "on" : ""}" data-a="evenement" data-v="${ev}">
           <ha-icon icon="${ICONE_EVENEMENT[ev]}"></ha-icon>${this.t(ev)} (${nb(ev)})</button>`).join("")}
       </div>
-      <div class="pile">${cartes}</div>
+      ${cartes}
       ${this._editeur ? `<div class="boutons-bas">
         <button type="button" class="btn primaire grand" data-a="nouvelle"><ha-icon icon="mdi:plus"></ha-icon>${this.t("ajouter_regle")}</button>
         <button type="button" class="btn grand" data-a="modeles"><ha-icon icon="mdi:view-grid-outline"></ha-icon>${this.t("partir_modele")}</button>
@@ -726,8 +782,9 @@ class ProtocoleAlarmePanel extends HTMLElement {
   _carteRegle(r) {
     const premiere = (r.actions || [])[0];
     const dom = r.avance ? "script" : premiere?.type === "entite" ? domaineDe(premiere.entity_id) : premiere?.type || "script";
-    const verif = r.verification?.active ? `<div class="meta"><ha-icon icon="mdi:check-decagram-outline"></ha-icon>${this.t("verif_apres", { s: r.verification.delai_s })}</div>` : "";
-    const options = [r.grace_s ? this.t("grace_court", { s: r.grace_s }) : "", r.tolerer ? this.t("tolerer_court") : ""].filter(Boolean).join(" · ");
+    const nEchec = (r.verification?.actions || []).length;
+    const verif = r.verification?.active ? `<div class="meta"><ha-icon icon="mdi:check-decagram-outline"></ha-icon>${this.t("verif_apres", { s: r.verification.delai_s })}${nEchec ? ` · ${this.t("sinon_n", { n: nEchec })}` : ""}</div>` : "";
+    const options = [r.grace_s ? this.t("grace_court", { s: r.grace_s }) : "", r.tolerer ? `${this.t("tolerer_court")}${r.tolerer_si ? ` ${this._tolererSiTexte(r)}` : ""}` : ""].filter(Boolean).join(" · ");
     const surveille = r.surveiller ? `<div class="meta"><ha-icon icon="mdi:eye-outline"></ha-icon>${this.t("surveiller_court")}${options ? ` (${esc(options)})` : ""}</div>` : "";
     const delai = r.delai_s ? `<div class="meta"><ha-icon icon="mdi:timer-outline"></ha-icon>${this.t("delai_avant")} : ${r.delai_s} s</div>` : "";
     const confirmer = this._confirmer === r.id;
@@ -822,6 +879,15 @@ class ProtocoleAlarmePanel extends HTMLElement {
           <span class="noms"><span class="nom">${this.t("tolerer")}</span><span class="sous">${this.t("tolerer_desc")}</span></span>
           <span class="case ${b.tolerer ? "on" : ""}">${b.tolerer ? '<ha-icon icon="mdi:check"></ha-icon>' : ""}</span>
         </button>
+        ${b.tolerer ? `
+        <div class="retrait">
+          <button type="button" class="option ${b.tolerer_si ? "on" : ""}" aria-pressed="${!!b.tolerer_si}" data-a="tolerer-si">
+            <span class="noms"><span class="nom">${this.t("tolerer_si")}</span><span class="sous">${this.t("tolerer_si_desc")}</span></span>
+            <span class="case ${b.tolerer_si ? "on" : ""}">${b.tolerer_si ? '<ha-icon icon="mdi:check"></ha-icon>' : ""}</span>
+          </button>
+          ${b.tolerer_si ? `${this._boutonEntite(b.tolerer_si.entity_id, `data-a="tolerer-si-entite"`, "cover")}
+            <span class="etiquette">${this.t("etat_attendu")}</span>${this._choixEtats(b.tolerer_si.entity_id, b.tolerer_si.etat, "tolerer-si-etat", 0, "tolerer-si-libre")}` : ""}
+        </div>` : ""}
       </div>` : ""}
       <h4>${this.t("pour_modes")}</h4>
       <p class="sous">${this.t("aucun_coche")}</p>
@@ -877,16 +943,17 @@ class ProtocoleAlarmePanel extends HTMLElement {
     return String(v ?? "");
   }
 
-  _params(action, i) {
+  _params(action, i, l = "") {
+    const L = l ? ` data-l="${l}"` : "";
     const s = this._hass.states[action.entity_id];
     const p = action.params || {};
     const curseur = (nom, min, max, pas, valeur, libelle) => `
       <div class="reglage">
-        <div class="ligne"><label for="p-${i}-${nom}">${this.t(libelle)}</label><output id="val-${i}-${nom}">${esc(this._valeurParam(nom, valeur))}</output></div>
-        <input id="p-${i}-${nom}" type="range" min="${min}" max="${max}" step="${pas}" value="${valeur ?? min}" data-f="param" data-p="${nom}" data-i="${i}">
+        <div class="ligne"><label for="p-${l}${i}-${nom}">${this.t(libelle)}</label><output id="val-${l}${i}-${nom}">${esc(this._valeurParam(nom, valeur))}</output></div>
+        <input id="p-${l}${i}-${nom}" type="range" min="${min}" max="${max}" step="${pas}" value="${valeur ?? min}" data-f="param" data-p="${nom}" data-i="${i}"${L}>
       </div>`;
     const liste = (nom, options, libelle, vide) => `
-      <label class="champ"><span>${this.t(libelle)}</span><select data-f="param-select" data-p="${nom}" data-i="${i}">
+      <label class="champ"><span>${this.t(libelle)}</span><select data-f="param-select" data-p="${nom}" data-i="${i}"${L}>
         ${vide ? `<option value="">${this.t("luminosite_inchangee")}</option>` : ""}
         ${options.map((o) => `<option value="${esc(o)}" ${String(p[nom]) === String(o) ? "selected" : ""}>${esc(o)}</option>`).join("")}</select></label>`;
     switch (action.action) {
@@ -894,39 +961,42 @@ class ProtocoleAlarmePanel extends HTMLElement {
       case "position": return curseur("position", 0, 100, 5, p.position ?? 0, "position");
       case "allumer": return action.entity_id.startsWith("light.") ? curseur("luminosite", 0, 100, 5, p.luminosite ?? 0, "luminosite") : "";
       case "preset": return liste("preset", s?.attributes?.preset_modes || [], "preset");
-      case "temperature": return `<label class="champ court"><span>${this.t("temperature")}</span><input type="number" min="5" max="35" step="0.5" value="${p.temperature ?? 17}" data-f="param" data-p="temperature" data-i="${i}"></label>`;
+      case "temperature": return `<label class="champ court"><span>${this.t("temperature")}</span><input type="number" min="5" max="35" step="0.5" value="${p.temperature ?? 17}" data-f="param" data-p="temperature" data-i="${i}"${L}></label>`;
       case "choisir": return liste("option", s?.attributes?.options || [], "option");
       default: return "";
     }
   }
 
-  _carteAction(a, i) {
+  _carteAction(a, i, l = "") {
+    const L = l ? ` data-l="${l}"` : "";
     const tete = `<div class="tete-bloc"><span class="etiquette">${this.t("action_n", { n: i + 1 })}</span>
-      <button type="button" class="icone-btn" data-a="retirer-action" data-i="${i}" aria-label="${this.t("retirer")}"><ha-icon icon="mdi:delete-outline"></ha-icon></button></div>`;
+      <button type="button" class="icone-btn" data-a="retirer-action" data-i="${i}"${L} aria-label="${this.t("retirer")}"><ha-icon icon="mdi:delete-outline"></ha-icon></button></div>`;
     if (a.type === "simulateur") {
       const ls = this._d.simulateur;
       return `<div class="carte bloc">${tete}
-        <button type="button" class="entite-btn" data-a="changer-action" data-i="${i}">${this._pastilleIcone("simulateur")}
+        <button type="button" class="entite-btn" data-a="changer-action" data-i="${i}"${L}>${this._pastilleIcone("simulateur")}
           <span class="noms"><span class="nom">${this.t("simulateur")}</span><span class="sous">Lights Simulator · ${this.t(CLE_STATUT[ls.statut])}</span></span><ha-icon icon="mdi:chevron-right"></ha-icon></button>
         ${ls.statut !== "pret" ? this._carteLs(true) : ""}
-        <div class="chips">${["demarrer", "auto", "arreter"].map((x) => `<button type="button" class="chip ${a.action === x ? "on" : ""}" aria-pressed="${a.action === x}" data-a="choix-action" data-i="${i}" data-v="${x}">${ACTIONS[this._langue][x]}</button>`).join("")}</div>
+        <div class="chips">${["demarrer", "auto", "arreter"].map((x) => `<button type="button" class="chip ${a.action === x ? "on" : ""}" aria-pressed="${a.action === x}" data-a="choix-action" data-i="${i}"${L} data-v="${x}">${ACTIONS[this._langue][x]}</button>`).join("")}</div>
         ${ls.double_pilotage ? `<p class="avert">${this.t("ls_double")}</p>` : ""}
       </div>`;
     }
     if (a.type === "alarme") {
       return `<div class="carte bloc">${tete}
-        <button type="button" class="entite-btn" data-a="changer-action" data-i="${i}">${this._pastilleIcone("alarm_control_panel")}
+        <button type="button" class="entite-btn" data-a="changer-action" data-i="${i}"${L}>${this._pastilleIcone("alarm_control_panel")}
           <span class="noms"><span class="nom">${esc(this._nomEntite(this._d.instantane.alarme))}</span><span class="id">${esc(this._d.instantane.alarme || "")}</span></span><ha-icon icon="mdi:chevron-right"></ha-icon></button>
-        <div class="chips"><button type="button" class="chip on" aria-pressed="true" data-a="choix-action" data-i="${i}" data-v="declencher">${this.t("declencher_alarme")}</button></div>
+        <div class="chips"><button type="button" class="chip on" aria-pressed="true" data-a="choix-action" data-i="${i}"${L} data-v="declencher">${this.t("declencher_alarme")}</button></div>
         <p class="sous">${this.t("declencher_alarme_desc")}</p>
       </div>`;
     }
     if (a.type === "notification") {
       return `<div class="carte bloc">${tete}
-        <span class="etiquette">${this.t("service_notif")}</span>${this._choixServices(a.services || [], "notif-service", i)}
-        <label class="champ"><span>${this.t("titre_notif")}</span><input type="text" data-f="titre" data-i="${i}" value="${esc(a.params.titre || "")}"></label>
-        <label class="champ"><span>${this.t("message")}</span><textarea rows="2" data-f="message" data-i="${i}">${esc(a.params.message || "")}</textarea></label>
-        <button type="button" class="option ${a.params.critique ? "on" : ""}" aria-pressed="${!!a.params.critique}" data-a="critique" data-i="${i}">
+        <span class="etiquette">${this.t("service_notif")}</span>${this._choixServices(a.services || [], "notif-service", i, L)}
+        <label class="champ"><span>${this.t("titre_notif")}</span><input type="text" data-f="titre" data-i="${i}"${L} value="${esc(a.params.titre || "")}"></label>
+        <label class="champ"><span>${this.t("message")}</span><textarea rows="3" data-f="message" data-i="${i}"${L}>${esc(a.params.message || "")}</textarea></label>
+        <p class="sous">${esc(this.t(l ? "variables_echec" : "variables_action"))}</p>
+        ${String(a.params.message || "").includes("{{") ? `<div class="apercu"><span class="etiquette">${this.t("apercu")}</span><span id="apercu-${l}${i}">${esc(this._apercu(a.params.message, l))}</span></div>` : ""}
+        <button type="button" class="option ${a.params.critique ? "on" : ""}" aria-pressed="${!!a.params.critique}" data-a="critique" data-i="${i}"${L}>
           <span class="ic orange"><ha-icon icon="mdi:bell-alert"></ha-icon></span>
           <span class="noms"><span class="nom">${this.t("critique")}</span><span class="sous">${this.t("critique_desc")}</span></span>
           <span class="case ${a.params.critique ? "on" : ""}">${a.params.critique ? '<ha-icon icon="mdi:check"></ha-icon>' : ""}</span>
@@ -935,9 +1005,9 @@ class ProtocoleAlarmePanel extends HTMLElement {
     }
     const actions = Object.keys(this._d.catalogue[domaineDe(a.entity_id)] || {});
     const choix = a.entity_id
-      ? `<div class="chips">${actions.map((x) => `<button type="button" class="chip ${a.action === x ? "on" : ""}" aria-pressed="${a.action === x}" data-a="choix-action" data-i="${i}" data-v="${x}">${esc(this._libelleAction({ ...a, action: x }))}</button>`).join("")}</div>${this._params(a, i)}`
+      ? `<div class="chips">${actions.map((x) => `<button type="button" class="chip ${a.action === x ? "on" : ""}" aria-pressed="${a.action === x}" data-a="choix-action" data-i="${i}"${L} data-v="${x}">${esc(this._libelleAction({ ...a, action: x }))}</button>`).join("")}</div>${this._params(a, i, l)}`
       : "";
-    return `<div class="carte bloc">${tete}${this._boutonEntite(a.entity_id, `data-a="changer-action" data-i="${i}"`, a._domaine)}${choix}</div>`;
+    return `<div class="carte bloc">${tete}${this._boutonEntite(a.entity_id, `data-a="changer-action" data-i="${i}"${L}`, a._domaine)}${choix}</div>`;
   }
 
   _etape3() {
@@ -965,10 +1035,11 @@ class ProtocoleAlarmePanel extends HTMLElement {
             <label class="champ court"><span>${this.t("apres")} (s)</span><input type="number" min="0" max="3600" value="${v.delai_s}" data-f="verif-delai"></label>
             ${this._boutonEntite(v.entity_id, `data-a="verif-entite"`)}
             ${v.entity_id ? `<span class="etiquette">${this.t("doit_etre")}</span>${this._choixEtats(v.entity_id, v.etat, "verif-etat", 0, "verif-etat-libre")}` : ""}
-            <span class="etiquette">${this.t("sinon_prevenir")}</span>${this._choixServices(v.notifiers || [], "verif-notif", 0)}
-            <p class="sous">${this.t("plusieurs_destinataires")}</p>
-            ${(v.notifiers || []).length ? this._blocMessage(v) : ""}
           </div>
+          <h4 class="sinon">${this.t("sinon_faire")}</h4>
+          ${(v.actions || []).map((a, i) => this._carteAction(a, i, "v")).join("")}
+          <button type="button" class="btn pointille" data-a="ajouter-action" data-l="v"><ha-icon icon="mdi:plus"></ha-icon>${this.t("ajouter_action_echec")}</button>
+          ${(v.actions || []).length ? "" : `<p class="sous">${this.t("aucune_action_echec")}</p>`}
           <p class="sous">${this.t("verif_note")}</p>` : ""}
       </div>`;
     return `
@@ -981,27 +1052,20 @@ class ProtocoleAlarmePanel extends HTMLElement {
 
   _messageDefaut() { return this._d?.message_defaut || ""; }
 
-  _apercuMessage(v) {
+  _apercu(message, l) {
+    // Aperçu avec des valeurs d'exemple tirées de la règle en cours
     const b = this._brouillon;
+    const v = b.verification;
     const autre = this._etatsPossibles(v.entity_id).find((e) => e !== v.etat) || "unknown";
+    const entite = l ? v.entity_id : b.conditions[0]?.entity_id;
     const valeurs = {
       regle: b.nom || this.t("nouvelle_regle"),
-      entite: this._nomEntite(v.entity_id),
-      etat_actuel: String(this._etatLisible(v.entity_id, autre)).toLowerCase(),
-      etat_attendu: String(this._etatLisible(v.entity_id, v.etat)).toLowerCase(),
+      entite: entite ? this._nomEntite(entite) : this.t("entite"),
+      etat_actuel: l ? String(this._etatLisible(v.entity_id, autre)).toLowerCase() : "",
+      etat_attendu: l ? String(this._etatLisible(v.entity_id, v.etat)).toLowerCase() : "",
       evenement: "",
     };
-    return (v.message ?? this._messageDefaut()).replace(/\{\{\s*(\w+)\s*\}\}/g, (tout, nom) => (nom in valeurs ? valeurs[nom] : tout));
-  }
-
-  _blocMessage(v) {
-    const perso = v.message !== null && v.message !== undefined && v.message !== this._messageDefaut();
-    return `
-      <label class="champ"><span>${this.t("message_envoye")}</span>
-        <textarea rows="3" data-f="verif-message">${esc(v.message ?? this._messageDefaut())}</textarea></label>
-      <p class="sous">${esc(this.t("message_variables"))}</p>
-      <div class="apercu"><span class="etiquette">${this.t("apercu")}</span><span id="apercu-message">${esc(this._apercuMessage(v))}</span></div>
-      ${perso ? `<button type="button" class="lien" data-a="verif-message-defaut"><ha-icon icon="mdi:restore"></ha-icon>${this.t("message_retablir")}</button>` : ""}`;
+    return String(message || "").replace(/\{\{\s*(\w+)\s*\}\}/g, (tout, nom) => (nom in valeurs && valeurs[nom] !== "" ? valeurs[nom] : tout));
   }
 
   _carteDelai() {
@@ -1027,10 +1091,18 @@ class ProtocoleAlarmePanel extends HTMLElement {
     return `
       <div class="carte recap">
         <div class="tete">${this._pastilleIcone(dom || "script")}<span class="nom grand">${esc(b.nom)}</span></div>
-        ${ligne(this.t("etape_quand").toUpperCase(), `${this.t(b.evenement === "armement" ? "a_larmement" : "au_desarmement")}${b.surveiller ? ` ${this.t("et_pendant")}` : ""}${b.surveiller && b.grace_s ? ` · ${esc(this.t("grace_court", { s: b.grace_s }))}` : ""}${b.surveiller && b.tolerer ? ` · ${esc(this.t("tolerer_court"))}` : ""} · <b>${esc(this._modesTexte(b))}</b>`)}
+        ${ligne(this.t("etape_quand").toUpperCase(), `${this.t(b.evenement === "armement" ? "a_larmement" : "au_desarmement")}${b.surveiller ? ` ${this.t("et_pendant")}` : ""}${b.surveiller && b.grace_s ? ` · ${esc(this.t("grace_court", { s: b.grace_s }))}` : ""}${b.surveiller && b.tolerer ? ` · ${esc(this.t("tolerer_court"))}` : ""}${b.surveiller && b.tolerer && b.tolerer_si?.entity_id ? ` ${esc(this._tolererSiTexte(b))}` : ""} · <b>${esc(this._modesTexte(b))}</b>`)}
         ${ligne(this.t("etape_si").toUpperCase(), conds)}
         ${ligne(this.t("etape_alors").toUpperCase(), actions + (b.delai_s ? `<br><span class="sous">${this.t("delai_avant")} : ${b.delai_s} s</span>` : ""))}
-        ${v.active ? ligne(this.t("verifier_resultat").split(" ")[0].toUpperCase(), `${this.t("apres")} ${v.delai_s} s, <b>${esc(this._nomEntite(v.entity_id))}</b> ${this.t("doit_etre")} <i>${esc(this._etatLisible(v.entity_id, v.etat))}</i>${(v.notifiers || []).length ? `, ${this.t("sinon_prevenir")} ${esc(v.notifiers.map((x) => this._nomService(x)).join(", "))}` : ""}`) : ""}
+        ${v.active ? ligne(this.t("verifier_resultat").split(" ")[0].toUpperCase(), `${this.t("apres")} ${v.delai_s} s, <b>${esc(this._nomEntite(v.entity_id))}</b> ${this.t("doit_etre")} <i>${esc(this._etatLisible(v.entity_id, v.etat))}</i>${(v.actions || []).length ? `<br>${this.t("sinon_faire")} ${v.actions.map((a) => `<b>${esc(this._libelleAction(a))}</b> ${a.type === "entite" ? esc(this._cible(a)) : this._cible(a)}${this._detailParams(a)}`).join(", ")}` : ""}`) : ""}
+      </div>
+      <div class="carte bloc">
+        <span class="etiquette">${this.t("type_regle")}</span>
+        <div class="chips">${CATEGORIES.map(([c, icone]) => {
+          const on = categorieDe(b) === c;
+          return `<button type="button" class="chip ${on ? "on" : ""}" aria-pressed="${on}" data-a="categorie" data-v="${c}"><ha-icon icon="${on ? "mdi:check" : icone}"></ha-icon>${this.t(`cat_${c}`)}</button>`;
+        }).join("")}</div>
+        <p class="sous">${this.t("type_regle_desc")}</p>
       </div>
       <button type="button" class="btn grand contour" data-a="tester-brouillon"><ha-icon icon="mdi:play"></ha-icon>${this.t("tester_maintenant")}</button>
       <p class="sous centre">${this.t("tester_note")}</p>
@@ -1276,6 +1348,13 @@ const STYLE = `
   .carte { background: var(--carte); border-radius: var(--ha-card-border-radius, 14px); border: 1px solid var(--trait); padding: 16px; display: flex; flex-direction: column; gap: 10px; }
   .carte.vide { color: var(--gris); text-align: center; padding: 28px 16px; }
   .pile { display: flex; flex-direction: column; gap: 12px; }
+  .groupe { display: flex; flex-direction: column; gap: 8px; }
+  .groupe + .groupe { margin-top: 10px; }
+  .titre-groupe { display: flex; align-items: center; gap: 8px; margin: 4px 2px 0; font-size: 14px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--secondary-text-color, #5f6368); }
+  .titre-groupe ha-icon { --mdc-icon-size: 18px; }
+  .titre-groupe .nb { margin-left: auto; font-weight: 500; background: var(--secondary-background-color, #eceff1); border-radius: 999px; padding: 1px 9px; font-size: 12px; }
+  .retrait { display: flex; flex-direction: column; gap: 8px; margin-left: 14px; padding-left: 12px; border-left: 3px solid var(--divider-color, #e0e0e0); }
+  h4.sinon { margin: 10px 0 0; }
   .grille { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 12px; align-items: start; }
   h2 { margin: 0; font-size: 18px; font-weight: 500; } h3.titre-etape { margin: 4px 0 0; font-size: 20px; font-weight: 700; } h4 { margin: 8px 0 0; font-size: 16px; font-weight: 500; }
   .sous { color: var(--gris); font-size: 13px; margin: 0; } .centre { text-align: center; justify-content: center; }

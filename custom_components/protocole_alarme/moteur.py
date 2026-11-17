@@ -8,7 +8,6 @@ import logging
 from typing import Any
 
 import voluptuous as vol
-from homeassistant.components import persistent_notification
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import Context, Event, EventStateChangedData, HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
@@ -94,9 +93,24 @@ class Moteur:
         self.tolerees: set[str] = set(donnees.get("tolerees", []))
         self.derniere_execution = donnees.get("derniere_execution")
         self.echec_verification = bool(donnees.get("echec_verification", False))
+        if self._migrer():
+            await self.store.async_save(self._a_sauver())
         if self.alarme:
             self._desabonner = async_track_state_change_event(self.hass, [self.alarme], self._alarme_changee)
         self._abonner_surveillance()
+
+    def _migrer(self) -> bool:
+        """Met les règles enregistrées au format courant (type de règle, actions de vérification)."""
+        change = False
+        for index, regle in enumerate(self.regles):
+            if "categorie" in regle and "notifiers" not in (regle.get("verification") or {}):
+                continue
+            try:
+                self.regles[index] = R.normaliser(regle, self.message_defaut)
+                change = True
+            except (vol.Invalid, ValueError) as err:
+                _LOGGER.warning("Règle « %s » non convertie : %s", regle.get("nom"), err)
+        return change
 
     async def async_arreter(self) -> None:
         if self._desabonner:
@@ -172,11 +186,16 @@ class Moteur:
                 self._demarrer_tache(copy.deepcopy(regle), evenement, mode, contexte)
 
     def _demarrer_tache(
-        self, regle: dict, evenement: str, mode: str | None, contexte: Context | None = None, groupe: str | None = None
+        self, regle: dict, evenement: str, mode: str | None, contexte: Context | None = None,
+        groupe: str | None = None, declencheur: str | None = None,
     ) -> None:
-        """Lance une règle en tâche de fond. groupe : ensemble annulé par l'événement inverse."""
+        """Lance une règle en tâche de fond. groupe : ensemble annulé par l'événement inverse.
+
+        declencheur : entité dont le changement a lancé la règle (surveillance), pour {{ entite }}.
+        """
         tache = self.entry.async_create_background_task(
-            self.hass, self._executer(regle, evenement, mode, contexte or Context()), f"{DOMAIN} {regle['nom']}"
+            self.hass, self._executer(regle, evenement, mode, contexte or Context(), declencheur),
+            f"{DOMAIN} {regle['nom']}",
         )
         ensemble = self._taches[groupe or evenement]
         ensemble.add(tache)
@@ -213,37 +232,63 @@ class Moteur:
         for regle in self.regles:
             if (
                 R.concerne(regle, EVT_ARMEMENT, etat_alarme)
-                and R.declenchee_pendant(regle, entity_id, ancien, nouveau)
                 and regle["id"] not in self._regles_en_cours
-                and regle["id"] not in self.tolerees
                 and not (regle.get("grace_s") and depuis is not None and depuis < regle["grace_s"])
+                and R.doit_declencher(regle, entity_id, ancien, nouveau, regle["id"] in self.tolerees, self._etat)
             ):
                 self._demarrer_tache(
                     copy.deepcopy(regle), EVT_SURVEILLANCE, etat_alarme,
-                    Context(parent_id=event.context.id), groupe=EVT_ARMEMENT,
+                    Context(parent_id=event.context.id), groupe=EVT_ARMEMENT, declencheur=entity_id,
                 )
 
     # ------------------------------------------------------------------ exécution
 
-    async def _executer(self, regle: dict, evenement: str, mode: str | None, contexte: Context) -> None:
-        ok, detail = R.conditions_remplies(regle, self._etat)
-        if not ok:
-            self._noter(regle, evenement, RES_CONDITION, detail)
-            return
+    def contexte_script(self) -> R.Contexte:
+        entite_ls = simulateur.entite_mode(self.hass)
+        return R.Contexte(
+            entite_ls=entite_ls,
+            options_ls=simulateur.options_mode(self.hass, entite_ls),
+            alarme=self.alarme,
+            entites_notify=frozenset(self.hass.states.async_entity_ids("notify")),
+        )
+
+    def _nom(self, entity_id: str | None) -> str:
+        if not entity_id:
+            return ""
+        etat = self.hass.states.get(entity_id)
+        return etat.name if etat else entity_id
+
+    async def _lancer_script(self, regle: dict, etapes: list[dict], variables: dict, contexte: Context) -> None:
+        """Valide puis exécute des étapes ; arrête proprement le script si la règle est annulée."""
         script: Script | None = None
         try:
-            entite_ls = simulateur.entite_mode(self.hass)
-            etapes = R.sequence_complete(regle, entite_ls, simulateur.options_mode(self.hass, entite_ls), self.alarme)
             etapes = await async_validate_actions_config(self.hass, cv.SCRIPT_SCHEMA(etapes))
             script = Script(
                 self.hass, etapes, f"{NOM_APPAREIL} : {regle['nom']}", DOMAIN,
                 script_mode="parallel", max_runs=10, logger=_LOGGER,
             )
-            variables = {"regle": regle["nom"], "evenement": evenement, "mode_alarme": mode}
             await script.async_run(run_variables=variables, context=contexte)
         except asyncio.CancelledError:
             if script is not None:
                 await script.async_stop()
+            raise
+
+    async def _executer(
+        self, regle: dict, evenement: str, mode: str | None, contexte: Context, declencheur: str | None = None
+    ) -> None:
+        ok, detail = R.conditions_remplies(regle, self._etat)
+        if not ok:
+            self._noter(regle, evenement, RES_CONDITION, detail)
+            return
+        # {{ entite }} : l'entité qui a déclenché la règle, sinon celle de la première condition
+        entite = declencheur or next((c["entity_id"] for c in regle.get("conditions") or []), None)
+        variables = {
+            "regle": regle["nom"], "evenement": evenement, "mode_alarme": mode,
+            "entite": self._nom(entite), "entite_id": entite or "",
+        }
+        try:
+            await self._lancer_script(regle, R.sequence_complete(regle, self.contexte_script()), variables, contexte)
+        except asyncio.CancelledError:
             self._noter(regle, evenement, RES_ANNULEE, "")
             raise
         except R.ErreurRegle as err:
@@ -254,9 +299,9 @@ class Moteur:
             self._noter(regle, evenement, RES_ERREUR, str(err))
             return
         self._noter(regle, evenement, RES_OK, "")
-        await self._verifier(regle, evenement)
+        await self._verifier(regle, evenement, mode, contexte)
 
-    async def _verifier(self, regle: dict, evenement: str) -> None:
+    async def _verifier(self, regle: dict, evenement: str, mode: str | None, contexte: Context) -> None:
         verif = regle.get("verification") or {}
         if not verif.get("active"):
             return
@@ -268,7 +313,30 @@ class Moteur:
             return
         self.echec_verification = True
         self._noter(regle, evenement, RES_VERIF_ECHEC, f"{verif['entity_id']} = {actuel}")
-        await self._prevenir(regle, verif, actuel)
+        if not verif.get("actions"):
+            return
+        variables = {
+            "regle": regle["nom"], "evenement": evenement, "mode_alarme": mode,
+            **await self.variables_verification(verif, actuel),
+        }
+        try:
+            await self._lancer_script(
+                regle, R.sequence_actions(verif["actions"], self.contexte_script()), variables, contexte
+            )
+        except R.ErreurRegle as err:
+            self._noter(regle, evenement, RES_ERREUR, err.code)
+        except (vol.Invalid, HomeAssistantError, ValueError) as err:
+            _LOGGER.warning("Règle « %s », actions en cas d'échec : %s", regle["nom"], err)
+            self._noter(regle, evenement, RES_ERREUR, str(err))
+
+    async def variables_verification(self, verif: dict, actuel: str | None) -> dict[str, str]:
+        """Variables des actions en cas d'échec : {{ entite }}, {{ etat_actuel }}, {{ etat_attendu }}."""
+        return {
+            "entite": self._nom(verif["entity_id"]),
+            "entite_id": verif["entity_id"],
+            "etat_actuel": await self._lisible(verif["entity_id"], actuel),
+            "etat_attendu": await self._lisible(verif["entity_id"], verif["etat"]),
+        }
 
     async def _attendre(self, secondes: int) -> None:
         """Pause annulable, sur l'horloge de Home Assistant."""
@@ -287,45 +355,13 @@ class Moteur:
         finally:
             desabonner()
 
-    async def _prevenir(self, regle: dict, verif: dict, actuel: str | None) -> None:
-        cibles = R.services_notification(verif.get("notifiers") or [], verif.get("notifier"))
-        if not cibles:
-            return
-        message = await self.async_message_echec(regle, verif, actuel)
-        titre = NOM_APPAREIL
-        for cible in cibles:
-            try:
-                if cible == "persistent_notification":
-                    persistent_notification.async_create(self.hass, message, titre)
-                else:
-                    domaine, service = cible.split(".", 1)
-                    await self.hass.services.async_call(
-                        domaine, service, {"message": message, "title": titre}, blocking=True
-                    )
-            except (HomeAssistantError, ValueError, vol.Invalid) as err:
-                _LOGGER.warning("Notification « %s » impossible : %s", cible, err)
-
     @property
     def langue(self) -> str:
         return "fr" if str(self.hass.config.language or "").startswith("fr") else "en"
 
-    async def async_message_echec(self, regle: dict, verif: dict, actuel: str | None) -> str:
-        """Message personnalisé (modèle Home Assistant) ou message par défaut dans la langue de HA."""
-        etat = self.hass.states.get(verif["entity_id"])
-        variables = {
-            "regle": regle["nom"],
-            "entite": etat.name if etat else verif["entity_id"],
-            "etat_actuel": await self._lisible(verif["entity_id"], actuel),
-            "etat_attendu": await self._lisible(verif["entity_id"], verif["etat"]),
-            "evenement": "",
-        }
-        defaut = MESSAGE_ECHEC_DEFAUT[self.langue]
-        for modele in (verif.get("message") or defaut, defaut):
-            try:
-                return str(Template(modele, self.hass).async_render(variables, parse_result=False)).strip()
-            except TemplateError as err:
-                _LOGGER.warning("Message de la règle « %s » invalide : %s", regle["nom"], err)
-        return defaut
+    @property
+    def message_defaut(self) -> str:
+        return MESSAGE_ECHEC_DEFAUT[self.langue]
 
     async def _lisible(self, entity_id: str, valeur: str | None) -> str:
         """État traduit comme dans Home Assistant (ex. « Ouvert » pour une porte de garage)."""
@@ -390,15 +426,15 @@ class Moteur:
             raise vol.Invalid(f"sequence_invalide: {err}") from err
 
     def valider_message(self, regle: dict) -> None:
-        message = (regle.get("verification") or {}).get("message")
-        if message:
+        """Les messages et titres de notification sont des modèles Home Assistant : syntaxe vérifiée ici."""
+        for texte in R.textes_modeles(regle):
             try:
-                Template(message, self.hass).ensure_valid()
+                Template(texte, self.hass).ensure_valid()
             except TemplateError as err:
                 raise vol.Invalid(f"message_invalide: {err}") from err
 
     async def async_enregistrer(self, brute: dict) -> dict:
-        regle = R.normaliser(brute)
+        regle = R.normaliser(brute, self.message_defaut)
         self.valider_message(regle)
         await self.async_valider_sequence(regle)
         existante = self.regle(regle["id"])
@@ -419,7 +455,7 @@ class Moteur:
             if not isinstance(brute, dict):
                 raise vol.Invalid("regle_invalide")
             # En ajout, chaque règle importée reçoit un nouvel identifiant (pas de collision)
-            regle = R.normaliser({**brute, "id": None} if not remplacer else brute)
+            regle = R.normaliser({**brute, "id": None} if not remplacer else brute, self.message_defaut)
             self.valider_message(regle)
             await self.async_valider_sequence(regle)
             nouvelles.append(regle)
@@ -469,7 +505,7 @@ class Moteur:
 
         Le contexte relie les actions à l'utilisateur qui a lancé le test (journal de bord).
         """
-        regle = R.normaliser(brute)
+        regle = R.normaliser(brute, self.message_defaut)
         self.valider_message(regle)
         await self.async_valider_sequence(regle)
         self._demarrer_tache(regle, EVT_TEST, self.dernier_mode, contexte)
@@ -486,9 +522,11 @@ class Moteur:
         """Script équivalent à une règle simple, pour passer en mode avancé."""
         if brute.get("avance") and brute.get("sequence"):
             return R.normaliser(brute)["sequence"]
-        regle = R.normaliser({**brute, "avance": False})
-        entite_ls = simulateur.entite_mode(self.hass) or "select.lights_simulator_mode"
-        return R.sequence_simple(regle, entite_ls, simulateur.options_mode(self.hass, entite_ls), self.alarme)
+        regle = R.normaliser({**brute, "avance": False}, self.message_defaut)
+        ctx = self.contexte_script()
+        if not ctx.entite_ls:
+            ctx = R.Contexte("select.lights_simulator_mode", ctx.options_ls, ctx.alarme, ctx.entites_notify)
+        return R.sequence_simple(regle, ctx)
 
     def instantane(self) -> dict[str, Any]:
         etat = self.hass.states.get(self.alarme) if self.alarme else None
