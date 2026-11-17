@@ -47,7 +47,7 @@ Protocole Alarme lance des actions quand vous **armez** ou **désarmez** votre a
 - **Import / export** des règles depuis le panneau (fichier JSON ou presse-papiers), en ajout ou en remplacement.
 - **Panneau latéral** « Protocole Alarme » consultable par tous ; création, modification et test réservés aux administrateurs et aux personnes qu'ils autorisent.
 - **Types de règles personnalisables** : ajout, renommage, icône, ordre et suppression dans Réglages ; les règles d'un type supprimé vont dans « Autres ». Dans la liste, chaque type se replie ou se déplie (mémorisé sur l'appareil).
-- **Carte du tableau de bord** « Protocole Alarme » : armer / désarmer (avec code si l'alarme le demande), bouclier vert quand l'alarme est désarmée et rouge quand elle est armée, règles exécutées depuis le dernier armement ou désarmement (en direct), capteurs en boutons ; listes repliables. Aucune ressource à ajouter.
+- **Carte du tableau de bord** « Protocole Alarme » : armer / désarmer (avec code si l'alarme le demande), bouclier vert quand l'alarme est désarmée et rouge quand elle est armée, règles exécutées depuis le dernier armement ou désarmement (en direct), boutons d'armement colorés par mode, capteurs en pastilles (grisées au repos, orange quand ils sont ouverts ou en détection) dans l'ordre choisi ; listes repliables. Aucune ressource à ajouter.
 - **Interface en français et en anglais**, selon la langue de l'utilisateur.
 
 ### Installation
@@ -73,7 +73,7 @@ Ouvrez le panneau **Protocole Alarme** dans la barre latérale.
 | Règles | Règles d'armement et de désarmement, activation, test, modification, duplication, suppression ; ajout par l'assistant ou à partir d'un modèle |
 | Entités | Les entités créées, avec leur état |
 | Journal | Les dernières exécutions : règle, moment, résultat, détail |
-| Réglages | Alarme suivie, protocole actif ou en pause, état de Lights Simulator, types de règles, import / export des règles, personnes autorisées à modifier les règles (administrateurs) |
+| Réglages | **Général** (alarme suivie, protocole actif ou en pause, Lights Simulator), **Organisation des règles** (types de règles), **Accès** (personnes autorisées à modifier les règles, administrateurs), **Sauvegarde** (import / export) |
 
 Le bouton **Configurer** de l'intégration permet de changer d'alarme et d'afficher ou masquer le panneau dans la barre latérale. Masqué, il reste accessible à l'adresse `/protocole-alarme`.
 
@@ -90,15 +90,16 @@ nom: Alarme                                  # facultatif : titre
 modes:                                       # modes affichés (ceux que l'alarme ne gère pas sont ignorés)
   - armed_away
   - armed_night
-capteurs:                                    # boutons de capteurs
+capteurs:                                    # capteurs, dans l'ordre d'affichage
   - binary_sensor.fenetre_salon
   - binary_sensor.porte_garage
 afficher_regles: true                        # liste « Règles exécutées »
 afficher_capteurs: true                      # liste « Capteurs »
+affichage_capteurs: pastilles                # pastilles | lignes (deux colonnes) | resume (ouverts seulement)
 afficher_panneau: true                       # bouton « Règles » vers le panneau (alarme désarmée)
 ```
 
-Bouclier : vert (désarmée), rouge (armée), orange (armement, attente), rouge clignotant (alarme déclenchée), gris (indisponible). Les règles affichées sont celles qui ont réellement agi depuis le dernier armement ou désarmement, avec le résultat de leur vérification. Un appui sur le titre d'une liste la replie ; un appui sur un capteur ouvre sa fiche. Le bouton **Règles** ouvre le panneau Protocole Alarme ; il n'apparaît que lorsque l'alarme est désarmée.
+Bouclier : vert (désarmée), rouge (armée), orange (armement, attente), rouge clignotant (alarme déclenchée), gris (indisponible). Les règles affichées sont celles qui ont réellement agi depuis le dernier armement ou désarmement, avec le résultat de leur vérification. Dans l'éditeur, les capteurs se trient avec les flèches (monter / descendre) et se retirent avec la croix. Un appui sur le titre d'une liste la replie ; un appui sur un capteur ouvre sa fiche. Le bouton **Règles** ouvre le panneau Protocole Alarme ; il n'apparaît que lorsque l'alarme est désarmée.
 
 ### Captures d'écran
 
@@ -112,7 +113,8 @@ Bouclier : vert (désarmée), rouge (armée), orange (armement, attente), rouge 
 | **Journal**<br>![Journal](docs/screenshots/journal.png) | **Entités**<br>![Entités](docs/screenshots/entites.png) |
 | **Import / export**<br>![Import](docs/screenshots/import.png) | **Intrusion — Quand ?** — délai après armement, tolérer seulement si le volet est fermé<br>![Intrusion](docs/screenshots/intrusion.png) |
 | **Volet — Alors…** — actions en cas d'échec (déclencher l'alarme, prévenir)<br>![Actions en cas d'échec](docs/screenshots/actions_echec.png) | **Récapitulatif** — type de règle<br>![Type de règle](docs/screenshots/type_regle.png) |
-| **Types de règles** — Réglages<br>![Types de règles](docs/screenshots/types.png) | **Carte du tableau de bord** — désarmée, armée, déclenchée<br>![Carte](docs/screenshots/carte.png) |
+| **Réglages sur grand écran** — général, types de règles, accès, sauvegarde<br>![Réglages](docs/screenshots/types.png) | **Carte du tableau de bord** — désarmée, armée, déclenchée<br>![Carte](docs/screenshots/carte.png) |
+| **Configuration de la carte** — modes, capteurs triés<br>![Configuration de la carte](docs/screenshots/carte_config.png) | |
 
 *Captures réalisées sur une installation de démonstration : toutes les entités sont fictives.*
 
@@ -197,7 +199,7 @@ Protocole Alarme runs actions when you **arm** or **disarm** your Home Assistant
 - **Import / export** of rules from the panel (JSON file or clipboard), adding or replacing.
 - **Sidebar panel** “Protocole Alarme” readable by everyone; creating, editing and testing are reserved to administrators and the people they allow.
 - **Customisable rule types**: add, rename, icon, order and delete in Settings; rules of a deleted type go to “Other”. In the list, each type can be collapsed or expanded (remembered on the device).
-- **Dashboard card** “Protocole Alarme”: arm / disarm (with a code if the alarm requires one), green shield when disarmed and red when armed, rules that ran since the last arming or disarming (live), sensors as buttons; collapsible lists. No resource to add.
+- **Dashboard card** “Protocole Alarme”: arm / disarm (with a code if the alarm requires one), green shield when disarmed and red when armed, rules that ran since the last arming or disarming (live), arming buttons coloured by mode, sensors as chips (greyed when idle, orange when open or detecting) in the chosen order; collapsible lists. No resource to add.
 - **French and English interface**, following the user's language.
 
 ### Installation
@@ -223,7 +225,7 @@ Open the **Protocole Alarme** panel in the sidebar.
 | Rules | Arming and disarming rules, enable, test, edit, duplicate, delete; add with the wizard or from a template |
 | Entities | The created entities with their state |
 | Log | Latest runs: rule, moment, result, detail |
-| Settings | Followed alarm, protocol enabled or paused, Lights Simulator status, rule types, rule import / export, people allowed to change rules (administrators) |
+| Settings | **General** (followed alarm, protocol enabled or paused, Lights Simulator), **Rule organisation** (rule types), **Access** (people allowed to change rules, administrators), **Backup** (import / export) |
 
 The integration's **Configure** button changes the alarm and shows or hides the panel in the sidebar. When hidden, it stays reachable at `/protocole-alarme`.
 
@@ -240,15 +242,16 @@ nom: Alarm                                # optional: title
 modes:                                    # modes shown (modes the alarm does not support are ignored)
   - armed_away
   - armed_night
-capteurs:                                 # sensor buttons
+capteurs:                                 # sensors, in display order
   - binary_sensor.living_room_window
   - binary_sensor.garage_door
 afficher_regles: true                     # “Rules that ran” list
 afficher_capteurs: true                   # “Sensors” list
+affichage_capteurs: pastilles             # pastilles (chips) | lignes (two columns) | resume (open only)
 afficher_panneau: true                    # “Rules” button to the panel (alarm disarmed)
 ```
 
-Shield: green (disarmed), red (armed), orange (arming, pending), blinking red (alarm triggered), grey (unavailable). The rules shown are the ones that actually acted since the last arming or disarming, with their check result. Tap a list title to collapse it; tap a sensor to open its details. The **Rules** button opens the Protocole Alarme panel; it only shows while the alarm is disarmed.
+Shield: green (disarmed), red (armed), orange (arming, pending), blinking red (alarm triggered), grey (unavailable). The rules shown are the ones that actually acted since the last arming or disarming, with their check result. In the editor, sensors are sorted with the arrows (up / down) and removed with the cross. Tap a list title to collapse it; tap a sensor to open its details. The **Rules** button opens the Protocole Alarme panel; it only shows while the alarm is disarmed.
 
 ### Screenshots
 

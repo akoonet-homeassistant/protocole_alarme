@@ -13,10 +13,13 @@ const TEXTES = {
       armed_vacation: "Armée · Vacances", armed_custom_bypass: "Armée · Personnalisé", arming: "Armement…", pending: "En attente…",
       disarming: "Désarmement…", triggered: "Alarme déclenchée !", unavailable: "Indisponible", unknown: "Inconnu" },
     modes: { armed_away: "Absent", armed_night: "Nuit", armed_home: "Présent", armed_vacation: "Vacances", armed_custom_bypass: "Personnalisé" },
-    ed: { entity: "Alarme", nom: "Titre", modes: "Modes affichés", capteurs: "Capteurs à afficher",
-      afficher_regles: "Afficher les règles exécutées", afficher_capteurs: "Afficher les capteurs",
+    ed: { entity: "Alarme", nom: "Titre", modes: "Modes affichés", capteurs: "Capteurs à afficher (dans cet ordre)",
+      ajouter_capteur: "Ajouter un capteur", monter: "Monter", descendre: "Descendre", retirer: "Retirer", aucun_capteur: "Aucun capteur.",
+      afficher_regles: "Afficher les règles exécutées", afficher_capteurs: "Afficher les capteurs", affichage_capteurs: "Affichage des capteurs",
       afficher_panneau: "Afficher le bouton « Règles » (alarme désarmée)" },
-    replier: "Replier", deplier: "Déplier",
+    styles: { pastilles: "Pastilles", lignes: "Liste sur deux colonnes", resume: "Résumé (capteurs ouverts seulement)" },
+    replier: "Replier", deplier: "Déplier", n_ouverts: "{n} ouvert(s)", tout_ferme: "Tout est fermé ({n} capteurs)",
+    voir_tout: "Voir tous les capteurs", masquer_fermes: "Masquer les capteurs fermés",
   },
   en: {
     nom: "Protocole Alarme", desarmer: "Disarm", code: "Code", effacer: "Clear", valider: "Confirm", annuler: "Cancel",
@@ -29,10 +32,13 @@ const TEXTES = {
       armed_vacation: "Armed · Vacation", armed_custom_bypass: "Armed · Custom", arming: "Arming…", pending: "Pending…",
       disarming: "Disarming…", triggered: "Alarm triggered!", unavailable: "Unavailable", unknown: "Unknown" },
     modes: { armed_away: "Away", armed_night: "Night", armed_home: "Home", armed_vacation: "Vacation", armed_custom_bypass: "Custom" },
-    ed: { entity: "Alarm", nom: "Title", modes: "Modes shown", capteurs: "Sensors to show",
-      afficher_regles: "Show rules that ran", afficher_capteurs: "Show sensors",
+    ed: { entity: "Alarm", nom: "Title", modes: "Modes shown", capteurs: "Sensors to show (in this order)",
+      ajouter_capteur: "Add a sensor", monter: "Move up", descendre: "Move down", retirer: "Remove", aucun_capteur: "No sensor.",
+      afficher_regles: "Show rules that ran", afficher_capteurs: "Show sensors", affichage_capteurs: "Sensor display",
       afficher_panneau: "Show the “Rules” button (alarm disarmed)" },
-    replier: "Collapse", deplier: "Expand",
+    styles: { pastilles: "Chips", lignes: "Two-column list", resume: "Summary (open sensors only)" },
+    replier: "Collapse", deplier: "Expand", n_ouverts: "{n} open", tout_ferme: "All closed ({n} sensors)",
+    voir_tout: "Show all sensors", masquer_fermes: "Hide closed sensors",
   },
 };
 
@@ -163,7 +169,7 @@ class ProtocoleAlarmeCard extends HTMLElement {
       : arme
       ? `<button class="action rouge-plein" data-s="alarm_disarm"><ha-icon icon="mdi:shield-off-outline"></ha-icon>${this._t("desarmer")}</button>`
       : this._modesVisibles(etat).map(([m, , service, ic]) =>
-          `<button class="action" data-s="${service}"><ha-icon icon="${ic}"></ha-icon>${esc(this._t(`modes.${m}`))}</button>`).join("");
+          `<button class="action mode-${m}" data-s="${service}"><ha-icon icon="${ic}"></ha-icon>${esc(this._t(`modes.${m}`))}</button>`).join("");
 
     const clavier = enSaisie ? `
       <div class="code">
@@ -205,17 +211,32 @@ class ProtocoleAlarmeCard extends HTMLElement {
     }
 
     const capteurs = this._config.afficher_capteurs ? (this._config.capteurs || []).filter((e) => this._hass.states[e]) : [];
-    const actifs = capteurs.filter((e) => ["on", "open", "opening", "unlocked", "detected"].includes(this._hass.states[e].state)).length;
-    const blocCapteurs = capteurs.length ? `<section class="capteurs">
-      ${this._entete("capteurs", this._t("capteurs"), actifs ? `${actifs} / ${capteurs.length}` : "")}
-      ${this._replie("capteurs") ? "" : `<div class="grille">${capteurs.map((e) => {
-        const s = this._hass.states[e];
-        const val = this._hass.formatEntityState ? this._hass.formatEntityState(s) : s.state;
-        const actif = ["on", "open", "opening", "unlocked", "detected"].includes(s.state);
-        return `<button class="capteur ${actif ? "actif" : ""}" data-e="${esc(e)}" title="${esc(s.attributes.friendly_name || e)}">
-          <ha-state-icon></ha-state-icon>
-          <span class="nom-capteur">${esc(s.attributes.friendly_name || e)}</span><span class="val">${esc(val)}</span></button>`;
-      }).join("")}</div>`}</section>` : "";
+    const style = this._config.affichage_capteurs || "pastilles";
+    const infos = capteurs.map((e) => {
+      const s = this._hass.states[e];
+      return { e, nom: s.attributes.friendly_name || e, val: this._hass.formatEntityState ? this._hass.formatEntityState(s) : s.state,
+        actif: ["on", "open", "opening", "unlocked", "detected"].includes(s.state) };
+    });
+    const bouton = (c, cls) => `<button class="capteur ${cls} ${c.actif ? "actif" : ""}" data-e="${esc(c.e)}" title="${esc(`${c.nom} : ${c.val}`)}">
+      <ha-state-icon></ha-state-icon><span class="nom-capteur">${esc(c.nom)}</span><span class="val">${esc(c.val)}</span></button>`;
+    let corps = "";
+    if (style === "resume") {
+      // Résumé : seuls les capteurs ouverts / en détection, le reste en une ligne
+      const ouverts = infos.filter((c) => c.actif);
+      corps = `${ouverts.length
+        ? `<div class="pastilles">${ouverts.map((c) => bouton(c, "pastille")).join("")}</div>`
+        : `<div class="tout-ok"><ha-icon icon="mdi:check-circle"></ha-icon>${this._t("tout_ferme", { n: infos.length })}</div>`}
+        ${this._voirTout ? `<div class="pastilles">${infos.filter((c) => !c.actif).map((c) => bouton(c, "pastille")).join("")}</div>` : ""}
+        ${infos.length > ouverts.length ? `<button class="voir" data-v="1">${this._t(this._voirTout ? "masquer_fermes" : "voir_tout")}</button>` : ""}`;
+    } else if (style === "lignes") {
+      corps = `<div class="lignes">${infos.map((c) => bouton(c, "ligne")).join("")}</div>`;
+    } else {
+      corps = `<div class="pastilles">${infos.map((c) => bouton(c, "pastille")).join("")}</div>`;
+    }
+    const actifs = infos.filter((c) => c.actif).length;
+    const blocCapteurs = infos.length ? `<section class="capteurs">
+      ${this._entete("capteurs", this._t("capteurs"), actifs ? this._t("n_ouverts", { n: actifs }) : "")}
+      ${this._replie("capteurs") ? "" : corps}</section>` : "";
 
     this.shadowRoot.innerHTML = `<style>${STYLE}</style>
       <ha-card>
@@ -255,6 +276,8 @@ class ProtocoleAlarmeCard extends HTMLElement {
     }));
     const champ = r.querySelector('[data-f="code"]');
     if (champ) champ.addEventListener("input", () => { this._code = champ.value.slice(0, 32); });
+    const voir = r.querySelector("button.voir");
+    if (voir) voir.addEventListener("click", () => { this._voirTout = !this._voirTout; this._rendu(); });
     r.querySelectorAll("button.titre-section").forEach((b) => b.addEventListener("click", () => this._basculer(b.dataset.l)));
     r.querySelectorAll("button.capteur").forEach((b) => b.addEventListener("click", () => {
       this.dispatchEvent(new CustomEvent("hass-more-info", { detail: { entityId: b.dataset.e }, bubbles: true, composed: true }));
@@ -282,7 +305,15 @@ class ProtocoleAlarmeCard extends HTMLElement {
 
 class ProtocoleAlarmeCardEditor extends HTMLElement {
   setConfig(config) { this._config = config; this._rendu(); }
-  set hass(hass) { this._hass = hass; if (this._form) this._form.hass = hass; else this._rendu(); }
+  set hass(hass) {
+    this._hass = hass;
+    if (this._form) { this._form.hass = hass; this._ajout.hass = hass; this._liste(); } else this._rendu();
+  }
+
+  _changer(config) {
+    this._config = config;
+    this.dispatchEvent(new CustomEvent("config-changed", { detail: { config }, bubbles: true, composed: true }));
+  }
 
   _rendu() {
     if (!this._hass || !this._config) return;
@@ -290,23 +321,71 @@ class ProtocoleAlarmeCardEditor extends HTMLElement {
     if (!this._form) {
       this._form = document.createElement("ha-form");
       this._form.computeLabel = (s) => T.ed[s.name] || s.name;
-      this._form.addEventListener("value-changed", (e) => {
-        this._config = e.detail.value;
-        this.dispatchEvent(new CustomEvent("config-changed", { detail: { config: this._config }, bubbles: true, composed: true }));
+      this._form.addEventListener("value-changed", (e) => this._changer({ ...e.detail.value, capteurs: this._config.capteurs || [] }));
+      // Capteurs : liste ordonnée (monter / descendre / retirer) + sélecteur pour en ajouter
+      this._bloc = document.createElement("div");
+      this._bloc.className = "pa-capteurs";
+      this._ajout = document.createElement("ha-form");
+      this._ajout.computeLabel = () => T.ed.ajouter_capteur;
+      this._ajout.schema = [{ name: "ajout", selector: { entity: {} } }];
+      this._ajout.addEventListener("value-changed", (e) => {
+        const id = e.detail.value?.ajout;
+        const liste = this._config.capteurs || [];
+        if (id && !liste.includes(id)) this._changer({ ...this._config, capteurs: [...liste, id] });
+        this._ajout.data = {};
+        this._liste();
       });
-      this.appendChild(this._form);
+      const style = document.createElement("style");
+      style.textContent = `.pa-capteurs { margin: 16px 0 8px; } .pa-titre { font-weight: 500; margin-bottom: 6px; }
+        .pa-ligne { display: flex; align-items: center; gap: 4px; padding: 4px 0; border-bottom: 1px solid var(--divider-color, #e0e0e0); }
+        .pa-nom { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .pa-nom small { display: block; color: var(--secondary-text-color); }
+        .pa-ligne button { width: 36px; height: 36px; border: 0; border-radius: 50%; background: none; color: inherit; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
+        .pa-ligne button:disabled { opacity: .3; cursor: default; }
+        .pa-ligne button:not(:disabled):hover { background: var(--secondary-background-color, #f5f5f5); }
+        .pa-vide { color: var(--secondary-text-color); font-size: 14px; padding: 4px 0 8px; }`;
+      this.append(style, this._form, this._bloc);
     }
     this._form.hass = this._hass;
     this._form.schema = [
       { name: "entity", selector: { entity: { domain: "alarm_control_panel" } } },
       { name: "nom", selector: { text: {} } },
       { name: "modes", selector: { select: { multiple: true, mode: "list", options: MODES.map(([m]) => ({ value: m, label: T.modes[m] })) } } },
-      { name: "capteurs", selector: { entity: { multiple: true } } },
       { name: "afficher_regles", selector: { boolean: {} } },
-      { name: "afficher_capteurs", selector: { boolean: {} } },
       { name: "afficher_panneau", selector: { boolean: {} } },
+      { name: "afficher_capteurs", selector: { boolean: {} } },
+      { name: "affichage_capteurs", selector: { select: { mode: "dropdown", options: [
+        { value: "pastilles", label: T.styles.pastilles }, { value: "lignes", label: T.styles.lignes }, { value: "resume", label: T.styles.resume }] } } },
     ];
-    this._form.data = { afficher_regles: true, afficher_capteurs: true, afficher_panneau: true, modes: ["armed_away", "armed_night"], capteurs: [], ...this._config };
+    this._form.data = { afficher_regles: true, afficher_capteurs: true, afficher_panneau: true, modes: ["armed_away", "armed_night"],
+      affichage_capteurs: "pastilles", ...this._config };
+    this._ajout.hass = this._hass;
+    this._liste();
+  }
+
+  _liste() {
+    const T = TEXTES[langue(this._hass)];
+    const liste = this._config.capteurs || [];
+    this._bloc.innerHTML = `<div class="pa-titre">${esc(T.ed.capteurs)}</div>
+      ${liste.length ? liste.map((e, k) => {
+        const s = this._hass.states[e];
+        return `<div class="pa-ligne"><span class="pa-nom">${esc(s?.attributes?.friendly_name || e)}<small>${esc(e)}</small></span>
+          <button data-a="haut" data-k="${k}" ${k === 0 ? "disabled" : ""} aria-label="${esc(T.ed.monter)}"><ha-icon icon="mdi:arrow-up"></ha-icon></button>
+          <button data-a="bas" data-k="${k}" ${k === liste.length - 1 ? "disabled" : ""} aria-label="${esc(T.ed.descendre)}"><ha-icon icon="mdi:arrow-down"></ha-icon></button>
+          <button data-a="retirer" data-k="${k}" aria-label="${esc(T.ed.retirer)}"><ha-icon icon="mdi:close"></ha-icon></button></div>`;
+      }).join("") : `<div class="pa-vide">${esc(T.ed.aucun_capteur)}</div>`}`;
+    this._bloc.appendChild(this._ajout);
+    this._bloc.querySelectorAll("button[data-a]").forEach((b) => b.addEventListener("click", () => {
+      const l = [...(this._config.capteurs || [])];
+      const k = Number(b.dataset.k);
+      if (b.dataset.a === "retirer") l.splice(k, 1);
+      else {
+        const j = b.dataset.a === "haut" ? k - 1 : k + 1;
+        [l[k], l[j]] = [l[j], l[k]];
+      }
+      this._changer({ ...this._config, capteurs: l });
+      this._liste();
+    }));
   }
 }
 
@@ -335,6 +414,14 @@ const STYLE = `
   .action { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 48px; border-radius: 12px; cursor: pointer; font: inherit; font-weight: 500;
     border: 1px solid var(--divider-color, #e0e0e0); background: var(--card-background-color, #fff); color: var(--primary-text-color); }
   .action:hover { background: var(--secondary-background-color, #f5f5f5); }
+  /* Une couleur par mode d'armement */
+  .action[class*="mode-"] { border-color: transparent; background: color-mix(in srgb, var(--c) 14%, transparent); color: var(--c); }
+  .action[class*="mode-"]:hover { background: color-mix(in srgb, var(--c) 24%, transparent); }
+  .mode-armed_away { --c: #c62828; }
+  .mode-armed_night { --c: #3949ab; }
+  .mode-armed_home { --c: #ef6c00; }
+  .mode-armed_vacation { --c: #00897b; }
+  .mode-armed_custom_bypass { --c: #6d4c41; }
   .action.rouge-plein { background: var(--rouge); color: #fff; border-color: transparent; }
   .action.bleu-plein { background: var(--primary-color, #03a9f4); color: #fff; border-color: transparent; }
   .actions > .action:only-child { grid-column: 1 / -1; }
@@ -349,7 +436,6 @@ const STYLE = `
   .titre-section .t { flex: 1; white-space: nowrap; }
   .titre-section .sous { text-transform: none; letter-spacing: 0; font-weight: 400; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .titre-section ha-icon { flex: none; }
-  .grille { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 8px; margin-top: 4px; }
   .sous { font-size: 13px; color: var(--secondary-text-color); }
   .avertissement { color: var(--orange); }
   ul { list-style: none; margin: 0; padding: 0; }
@@ -357,13 +443,28 @@ const STYLE = `
   li ha-icon { grid-row: span 2; align-self: center; }
   .nom-regle { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   ha-icon.vert, ha-state-icon.vert { color: var(--vert); } ha-icon.rouge { color: var(--rouge); } ha-icon.orange, ha-state-icon.orange, .val.orange { color: var(--orange); }
-  .capteur { display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 0; padding: 10px 6px; border-radius: 12px; cursor: pointer; font: inherit;
-    border: 1px solid var(--divider-color, #e0e0e0); background: var(--card-background-color, #fff); color: var(--primary-text-color); }
+  .pastilles { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+  .capteur { font: inherit; cursor: pointer; color: var(--primary-text-color); background: var(--card-background-color, #fff); border: 1px solid var(--divider-color, #e0e0e0); }
   .capteur:hover { background: var(--secondary-background-color, #f5f5f5); }
-  .capteur.actif { border-color: var(--orange); background: rgba(239,108,0,.08); }
+  .capteur ha-state-icon { --mdc-icon-size: 18px; color: var(--secondary-text-color); flex: none; }
+  /* Capteur au repos : grisé ; déclenché (ouvert, détection…) : orange */
+  .capteur:not(.actif) { background: var(--secondary-background-color, #f2f2f2); border-color: transparent; color: var(--secondary-text-color, #757575); }
+  .capteur:not(.actif) ha-state-icon { color: var(--disabled-text-color, #9e9e9e); }
+  .capteur:not(.actif):hover { color: var(--primary-text-color); }
+  .capteur.actif { border-color: var(--orange); background: rgba(239,108,0,.10); color: var(--primary-text-color); }
   .capteur.actif ha-state-icon, .capteur.actif .val { color: var(--orange); }
-  .nom-capteur { max-width: 100%; font-size: 13px; line-height: 1.25; text-align: center; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow-wrap: anywhere; }
-  .val { font-size: 12px; color: var(--secondary-text-color); white-space: nowrap; }
+  .pastille { display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 12px 0 10px; border-radius: 18px; max-width: 100%; }
+  .pastille .nom-capteur { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pastille .val { display: none; }
+  .pastille.actif .val { display: inline; font-size: 12px; font-weight: 500; }
+  .pastille.actif .val::before { content: "· "; }
+  .lignes { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 4px; }
+  .ligne { display: grid; grid-template-columns: 22px 1fr; column-gap: 8px; align-items: center; padding: 8px 10px; border-radius: 10px; text-align: left; min-width: 0; }
+  .ligne ha-state-icon { grid-row: span 2; }
+  .ligne .nom-capteur { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ligne .val { font-size: 12px; color: var(--secondary-text-color); }
+  .tout-ok { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--vert); padding: 4px 0; }
+  .voir { margin-top: 8px; border: 0; background: none; color: var(--primary-color, #03a9f4); font: inherit; font-size: 13px; cursor: pointer; padding: 6px 0; }
 `;
 
 if (!customElements.get("protocole-alarme-card")) customElements.define("protocole-alarme-card", ProtocoleAlarmeCard);

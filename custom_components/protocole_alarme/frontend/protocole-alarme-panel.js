@@ -1419,25 +1419,41 @@ class ProtocoleAlarmePanel extends HTMLElement {
     const d = this._d;
     const inst = d.instantane;
     const ls = d.simulateur;
-    return `<div class="grille">
-      <div class="carte">
-        <h2>${this.t("reglages_alarme")}</h2>
-        <div class="tete">${this._pastilleIcone("alarm_control_panel")}<span class="noms"><span class="nom">${esc(this._nomEntite(inst.alarme))}</span>
-          <span class="sous">${esc(inst.alarme || "—")} · ${esc(inst.etat_alarme ? this._etatLisible(inst.alarme, inst.etat_alarme) : this.t("alarme_absente"))}</span></span></div>
-        <div class="ligne-reglage"><span>${this.t("protocole_actif")}</span>${this._interrupteur(inst.actif, `data-a="actif"`, this.t("protocole_actif"))}</div>
-        ${this._admin ? `<a class="lien" href="/config/integrations/integration/${DOMAINE}"><ha-icon icon="mdi:cog"></ha-icon>${this.t("changer_alarme")}</a>` : ""}
-      </div>
-      ${ls.statut !== "pret" ? this._carteLs() : `<div class="carte">
-        <h2>${this.t("reglages_ls")}</h2>
-        ${ls.statut === "pret"
-          ? `<div class="tete">${this._pastilleIcone("simulateur")}<span class="noms"><span class="nom">Lights Simulator</span><span class="sous">${this.t("ls_entite")} : ${esc(ls.entite)}</span></span><span class="badge vert">${this.t("pret")}</span></div>
-             ${ls.double_pilotage ? `<p class="avert">${this.t("ls_double")}</p>` : ""}`
-          : ""}
-      </div>`}
-      ${this._editeur ? this._carteTypes() : ""}
-      ${this._editeur ? this._carteImportExport() : ""}
-      ${this._admin ? this._carteEditeurs() : ""}
-      <div class="carte"><h2>${this.t("version")}</h2><p class="sous">Protocole Alarme ${esc(d.version)}</p></div>
+    const etatAlarme = inst.etat_alarme ? this._etatLisible(inst.alarme, inst.etat_alarme) : this.t("alarme_absente");
+    // Une seule colonne, des sections titrées : lisible sur téléphone comme sur grand écran
+    const general = `
+      <section class="section-reglages">
+        <h2 class="titre-reglages">${this.t("sec_general")}</h2>
+        <div class="carte liste-reglages">
+          <div class="ligne-r">
+            ${this._pastilleIcone("alarm_control_panel")}
+            <span class="noms"><span class="nom">${this.t("reglages_alarme")}</span>
+              <span class="sous">${esc(this._nomEntite(inst.alarme))} · ${esc(etatAlarme)}</span></span>
+            ${this._admin ? `<a class="btn-mini" href="/config/integrations/integration/${DOMAINE}" title="${esc(this.t("changer_alarme"))}">${this.t("changer")}</a>` : ""}
+          </div>
+          <div class="ligne-r">
+            ${this._pastilleIcone("switch")}
+            <span class="noms"><span class="nom">${this.t("protocole_actif")}</span>
+              <span class="sous">${this.t(inst.actif ? "protocole_actif_desc" : "protocole_pause")}</span></span>
+            ${this._interrupteur(inst.actif, `data-a="actif"`, this.t("protocole_actif"))}
+          </div>
+          ${ls.statut === "pret" ? `
+          <div class="ligne-r">
+            ${this._pastilleIcone("simulateur")}
+            <span class="noms"><span class="nom">${this.t("reglages_ls")}</span>
+              <span class="sous">Lights Simulator · ${esc(ls.entite)}</span></span>
+            <span class="badge vert">${this.t("pret")}</span>
+          </div>
+          ${ls.double_pilotage ? `<p class="avert">${this.t("ls_double")}</p>` : ""}` : ""}
+        </div>
+        ${ls.statut !== "pret" ? this._carteLs() : ""}
+      </section>`;
+    return `<div class="reglages">
+      ${general}
+      ${this._editeur ? `<section class="section-reglages"><h2 class="titre-reglages">${this.t("sec_organisation")}</h2>${this._carteTypes()}</section>` : ""}
+      ${this._admin ? `<section class="section-reglages"><h2 class="titre-reglages">${this.t("sec_acces")}</h2>${this._carteEditeurs()}</section>` : ""}
+      ${this._editeur ? `<section class="section-reglages"><h2 class="titre-reglages">${this.t("sec_sauvegarde")}</h2>${this._carteImportExport()}</section>` : ""}
+      <p class="pied-version">Protocole Alarme ${esc(d.version)} · <a href="https://github.com/akoonet-homeassistant/protocole_alarme" target="_blank" rel="noopener noreferrer">GitHub</a></p>
     </div>`;
   }
 }
@@ -1466,6 +1482,20 @@ const STYLE = `
   .carte { background: var(--carte); border-radius: var(--ha-card-border-radius, 14px); border: 1px solid var(--trait); padding: 16px; display: flex; flex-direction: column; gap: 10px; }
   .carte.vide { color: var(--gris); text-align: center; padding: 28px 16px; }
   .pile { display: flex; flex-direction: column; gap: 12px; }
+  .reglages { display: flex; flex-direction: column; gap: 22px; max-width: 760px; width: 100%; margin: 0 auto; }
+  .section-reglages { display: flex; flex-direction: column; gap: 10px; }
+  .titre-reglages { margin: 0 4px; font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--gris); }
+  .liste-reglages { gap: 0; padding: 4px 16px; }
+  .ligne-r { display: flex; align-items: center; gap: 12px; min-height: 64px; padding: 10px 0; }
+  .ligne-r + .ligne-r { border-top: 1px solid var(--trait); }
+  .ligne-r .noms { flex: 1; min-width: 0; }
+  .ligne-r .sous { overflow-wrap: anywhere; }
+  .liste-reglages .avert { margin: 0 0 12px; }
+  .btn-mini { display: inline-flex; align-items: center; min-height: 36px; padding: 0 14px; border-radius: 18px; border: 1px solid var(--trait); color: var(--bleu); text-decoration: none; font-size: 14px; font-weight: 500; white-space: nowrap; }
+  .btn-mini:hover { background: var(--secondary-background-color, #f1f3f4); }
+  .section-reglages > .carte > h2:first-child { display: none; }
+  .pied-version { text-align: center; font-size: 13px; color: var(--gris); margin: 0 0 8px; }
+  .pied-version a { color: inherit; }
   .groupe { display: flex; flex-direction: column; gap: 8px; }
   .groupe + .groupe { margin-top: 10px; }
   .titre-groupe { display: flex; align-items: center; gap: 8px; width: 100%; margin: 4px 0 0; padding: 8px 4px; min-height: 44px; border: 0; background: none; cursor: pointer; font: inherit; font-size: 14px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--secondary-text-color, #5f6368); text-align: left; border-radius: 8px; }
@@ -1474,8 +1504,12 @@ const STYLE = `
   .titre-groupe .chevron { --mdc-icon-size: 22px; }
   .outils-groupes { display: flex; justify-content: flex-end; margin-bottom: -6px; }
   .ligne-type { display: flex; align-items: center; gap: 6px; padding: 6px 0; border-bottom: 1px solid var(--trait); }
-  .ligne-type .nom-type { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-  .ligne-type input { width: 100%; font: inherit; font-size: 15px; padding: 8px 10px; border: 1px solid var(--trait); border-radius: 8px; background: transparent; color: inherit; min-height: 40px; }
+  .ligne-type .nom-type { flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px; }
+  .ligne-type .nom-type input { flex: 1; min-width: 0; }
+  @media (max-width: 560px) { .ligne-type .nom-type { flex-direction: column; align-items: stretch; gap: 2px; } }
+  .ligne-type input { width: 100%; font: inherit; font-size: 15px; padding: 6px 10px; border: 1px solid transparent; border-radius: 8px; background: var(--secondary-background-color, #f5f6f8); color: inherit; min-height: 38px; }
+  .ligne-type input:hover { border-color: var(--trait); }
+  .ligne-type input:focus { outline: none; border-color: var(--bleu); background: transparent; }
   .ligne-type .n-regles { white-space: nowrap; padding-left: 4px; }
   .ligne-type .icone-btn { width: 40px; height: 40px; }
   .bouton-ic { border: 0; cursor: pointer; flex: none; }
