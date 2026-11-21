@@ -1,0 +1,24 @@
+name: 💡 Idée / Suggestion
+description: Proposer une amélioration · Suggest an improvement
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Vous pouvez écrire en français ou en anglais · You can write in French or English.
+  - type: textarea
+    id: besoin
+    attributes:
+      label: Votre besoin · What you need
+      description: Ce que vous aimeriez faire à l'armement ou au désarmement, et pourquoi · What you would like to happen when arming or disarming, and why
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Solution imaginée · Suggested solution
+  - type: textarea
+    id: contournement
+    attributes:
+      label: Comment vous faites aujourd'hui · How you do it today
+      description: Automatisation, script, mode avancé… · Automation, script, advanced mode…
