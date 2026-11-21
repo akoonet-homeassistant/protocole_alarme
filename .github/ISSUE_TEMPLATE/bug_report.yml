@@ -1,1 +1,51 @@
-
+name: 🐞 Bug / Problème
+description: Signaler un problème · Report a problem
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Merci de prendre le temps de signaler un problème. Vous pouvez écrire en français ou en anglais.
+        Thanks for taking the time to report a problem. You can write in French or English.
+  - type: input
+    id: version
+    attributes:
+      label: Version de Protocole Alarme · Protocole Alarme version
+      description: Réglages → pied de page du panneau · Settings → panel footer
+      placeholder: "2026.11.11"
+    validations:
+      required: true
+  - type: input
+    id: ha_version
+    attributes:
+      label: Version de Home Assistant · Home Assistant version
+      placeholder: "2026.11.2"
+    validations:
+      required: true
+  - type: textarea
+    id: probleme
+    attributes:
+      label: Ce qui se passe · What happens
+      description: Décrivez le problème et ce que vous attendiez · Describe the problem and what you expected
+    validations:
+      required: true
+  - type: textarea
+    id: etapes
+    attributes:
+      label: Comment le reproduire · How to reproduce
+      placeholder: |
+        1. Créer une règle d'armement…
+        2. Armer l'alarme en mode Absent…
+        3. …
+  - type: textarea
+    id: regle
+    attributes:
+      label: Règle concernée (export) · Rule involved (export)
+      description: Panneau → Réglages → Exporter. Retirez ce qui est personnel · Panel → Settings → Export. Remove anything personal
+      render: json
+  - type: textarea
+    id: journal
+    attributes:
+      label: Journal · Logs
+      description: Onglet Journal du panneau et/ou journaux de Home Assistant (protocole_alarme) · Panel Log tab and/or Home Assistant logs (protocole_alarme)
+      render: text
