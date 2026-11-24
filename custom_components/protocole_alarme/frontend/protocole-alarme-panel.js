@@ -68,6 +68,8 @@ const esc = (v) =>
 const CLE_STATUT = { absent: "non_installe", non_configure: "non_configure", pret: "pret" };
 // Une icône venant d'une entité (attribut icon) n'est utilisée que si elle a la forme « prefixe:nom » ;
 // sinon on prend l'icône par défaut. Elle est de toute façon échappée à l'affichage.
+// Limites identiques à celles du serveur (regles.py) : l'interface les applique avant l'envoi
+const LIMITES = { conditions: 20, actions: 50, actions_echec: 20, destinataires: 20, restaurer: 100, message: 500, titre: 120, etat: 100, nom: 80 };
 const RE_ICONE = /^[a-z0-9_-]{1,32}:[a-z0-9_-]{1,64}$/i;
 const iconeSure = (v) => (typeof v === "string" && RE_ICONE.test(v) ? v : "");
 const domaineDe = (entityId) => String(entityId || "").split(".")[0];
@@ -203,8 +205,9 @@ class ProtocoleAlarmePanel extends HTMLElement {
     const services = this._d.notifications || [];
     return `<div class="chips">${services.map((s) => {
       const on = choisis.includes(s);
+      const plein = !on && choisis.length >= LIMITES.destinataires;
       const icone = on ? "mdi:check" : this._hass?.states?.[s] ? "mdi:send" : "";
-      return `<button type="button" class="chip ${on ? "on" : ""}" aria-pressed="${on}" data-a="${nomAction}" data-i="${i}"${L} data-v="${esc(s)}">${icone ? `<ha-icon icon="${esc(icone)}"></ha-icon>` : ""}${esc(this._nomService(s))}</button>`;
+      return `<button type="button" class="chip ${on ? "on" : ""}" aria-pressed="${on}" data-a="${nomAction}" data-i="${i}"${L} data-v="${esc(s)}"${plein ? " disabled" : ""}>${icone ? `<ha-icon icon="${esc(icone)}"></ha-icon>` : ""}${esc(this._nomService(s))}</button>`;
     }).join("")}</div>`;
   }
   _libelleMode(m) { return MODES[this._langue][m] || m; }
@@ -291,11 +294,11 @@ class ProtocoleAlarmePanel extends HTMLElement {
         case "critique": { const a = this._liste(d)[i]; a.params.critique = !a.params.critique; break; }
         case "mode": b.modes = b.modes.includes(d.v) ? b.modes.filter((m) => m !== d.v) : [...b.modes, d.v]; break;
         case "si": this._siCond = d.v === "1"; if (this._siCond && !b.conditions.length) this._ouvrirSelecteur("condition", null); break;
-        case "ajouter-condition": this._ouvrirSelecteur("condition", null); return;
+        case "ajouter-condition": if (b.conditions.length < LIMITES.conditions) this._ouvrirSelecteur("condition", null); return;
         case "changer-condition": this._ouvrirSelecteur("condition", i); return;
         case "etat-condition": b.conditions[i].etat = d.v; break;
         case "retirer-condition": b.conditions.splice(i, 1); if (!b.conditions.length) this._siCond = false; break;
-        case "ajouter-action": this._ouvrirSelecteur("action", null, d.l); return;
+        case "ajouter-action": if (this._liste(d).length < (d.l === "v" ? LIMITES.actions_echec : LIMITES.actions)) this._ouvrirSelecteur("action", null, d.l); return;
         case "changer-action": this._ouvrirSelecteur("action", i, d.l); return;
         case "choix-action": { const a = this._liste(d)[i]; a.action = d.v; this._paramsParDefaut(a); break; }
         case "retirer-action": {
@@ -312,7 +315,7 @@ class ProtocoleAlarmePanel extends HTMLElement {
           b.restaurer.active = !b.restaurer.active;
           if (b.restaurer.active && !b.restaurer.entites.length) b.restaurer.entites = this._ciblesRestaurables(b);
           break;
-        case "restaurer-ajouter": this._ouvrirSelecteur("restaurer", null); return;
+        case "restaurer-ajouter": if (b.restaurer.entites.length < LIMITES.restaurer) this._ouvrirSelecteur("restaurer", null); return;
         case "restaurer-retirer": {
           const [id] = b.restaurer.entites.splice(i, 1);
           b.restaurer.manuelles = (b.restaurer.manuelles || []).filter((e) => e !== id);
@@ -323,6 +326,7 @@ class ProtocoleAlarmePanel extends HTMLElement {
           const a = this._liste(d)[i];
           const l = a.services;
           if (l.includes(d.v) && l.length === 1) break;
+          if (!l.includes(d.v) && l.length >= LIMITES.destinataires) break;
           a.services = l.includes(d.v) ? l.filter((x) => x !== d.v) : [...l, d.v];
           break;
         }
@@ -844,6 +848,12 @@ class ProtocoleAlarmePanel extends HTMLElement {
     if (liste) liste.innerHTML = this._lignesEntites();
   }
 
+  _boutonAjouter(action, libelle, n, max, attrs = "") {
+    const plein = n >= max;
+    return `<button type="button" class="btn pointille" data-a="${action}"${attrs} ${plein ? "disabled" : ""}><ha-icon icon="mdi:plus"></ha-icon>${libelle}</button>
+      ${plein ? `<p class="sous limite">${this.t("limite_atteinte", { n: max })}</p>` : ""}`;
+  }
+
   _interrupteur(on, attrs, label) {
     return `<button type="button" class="sw ${on ? "on" : ""}" role="switch" aria-checked="${on}" aria-label="${esc(label)}" ${attrs} ${this._editeur ? "" : "disabled"}><span></span></button>`;
   }
@@ -988,7 +998,7 @@ class ProtocoleAlarmePanel extends HTMLElement {
       </button>`;
     return `
       <label class="champ"><span>${this.t("nom_regle")}</span>
-        <input type="text" data-f="nom" value="${esc(b.nom)}" maxlength="80"></label>
+        <input type="text" data-f="nom" value="${esc(b.nom)}" maxlength="${LIMITES.nom}"></label>
       <h3 class="titre-etape">${this.t("quand_titre")}</h3>
       <div class="deux">
         ${option("armement", "mdi:lock", "orange", "a_larmement", "quand_active")}
@@ -1045,7 +1055,7 @@ class ProtocoleAlarmePanel extends HTMLElement {
     const etats = this._etatsPossibles(entityId);
     const chips = etats.map((e) => `<button type="button" class="chip ${e === valeur ? "on" : ""}" aria-pressed="${e === valeur}" data-a="${action}" data-i="${i}" data-v="${esc(e)}">${esc(this._etatLisible(entityId, e))}</button>`).join("");
     const libre = !etats.length || (valeur && !etats.includes(valeur))
-      ? `<label class="champ court"><span>${this.t("autre_etat")}</span><input type="text" data-f="${champLibre}" data-i="${i}" value="${esc(valeur || "")}"></label>` : "";
+      ? `<label class="champ court"><span>${this.t("autre_etat")}</span><input type="text" maxlength="${LIMITES.etat}" data-f="${champLibre}" data-i="${i}" value="${esc(valeur || "")}"></label>` : "";
     return `<div class="chips">${chips}</div>${libre}`;
   }
 
@@ -1064,7 +1074,7 @@ class ProtocoleAlarmePanel extends HTMLElement {
         <span class="noms"><span class="nom">${this.t("toujours")}</span><span class="sous">${this.t("toujours_desc")}</span></span></button>
       <button type="button" class="option ${this._siCond ? "on" : ""}" aria-pressed="${this._siCond}" data-a="si" data-v="1"><span class="rond"></span>
         <span class="noms"><span class="nom">${this.t("seulement_si")}</span><span class="sous">${this.t("seulement_si_desc")}</span></span></button>
-      ${this._siCond ? `${conds}<button type="button" class="btn pointille" data-a="ajouter-condition"><ha-icon icon="mdi:plus"></ha-icon>${this.t("ajouter_condition")}</button>` : ""}`;
+      ${this._siCond ? `${conds}${this._boutonAjouter("ajouter-condition", this.t("ajouter_condition"), b.conditions.length, LIMITES.conditions)}` : ""}`;
   }
 
   _valeurParam(p, v) {
@@ -1122,8 +1132,8 @@ class ProtocoleAlarmePanel extends HTMLElement {
     if (a.type === "notification") {
       return `<div class="carte bloc">${tete}
         <span class="etiquette">${this.t("service_notif")}</span>${this._choixServices(a.services || [], "notif-service", i, L)}
-        <label class="champ"><span>${this.t("titre_notif")}</span><input type="text" data-f="titre" data-i="${i}"${L} value="${esc(a.params.titre || "")}"></label>
-        <label class="champ"><span>${this.t("message")}</span><textarea rows="3" data-f="message" data-i="${i}"${L}>${esc(a.params.message || "")}</textarea></label>
+        <label class="champ"><span>${this.t("titre_notif")}</span><input type="text" maxlength="${LIMITES.titre}" data-f="titre" data-i="${i}"${L} value="${esc(a.params.titre || "")}"></label>
+        <label class="champ"><span>${this.t("message")}</span><textarea rows="3" maxlength="${LIMITES.message}" data-f="message" data-i="${i}"${L}>${esc(a.params.message || "")}</textarea></label>
         <p class="sous">${esc(this.t(l ? "variables_echec" : "variables_action"))}</p>
         ${String(a.params.message || "").includes("{{") ? `<div class="apercu"><span class="etiquette">${this.t("apercu")}</span><span id="apercu-${l}${i}">${esc(this._apercu(a.params.message, l))}</span></div>` : ""}
         <button type="button" class="option ${a.params.critique ? "on" : ""}" aria-pressed="${!!a.params.critique}" data-a="critique" data-i="${i}"${L}>
@@ -1169,14 +1179,14 @@ class ProtocoleAlarmePanel extends HTMLElement {
           </div>
           <h4 class="sinon">${this.t("sinon_faire")}</h4>
           ${(v.actions || []).map((a, i) => this._carteAction(a, i, "v")).join("")}
-          <button type="button" class="btn pointille" data-a="ajouter-action" data-l="v"><ha-icon icon="mdi:plus"></ha-icon>${this.t("ajouter_action_echec")}</button>
+          ${this._boutonAjouter("ajouter-action", this.t("ajouter_action_echec"), (v.actions || []).length, LIMITES.actions_echec, ` data-l="v"`)}
           ${(v.actions || []).length ? "" : `<p class="sous">${this.t("aucune_action_echec")}</p>`}
           <p class="sous">${this.t("verif_note")}</p>` : ""}
       </div>`;
     return `
       <h3 class="titre-etape">${this.t("alors_titre")}</h3>
       ${b.actions.map((a, i) => this._carteAction(a, i)).join("")}
-      <button type="button" class="btn pointille" data-a="ajouter-action"><ha-icon icon="mdi:plus"></ha-icon>${this.t("ajouter_action")}</button>
+      ${this._boutonAjouter("ajouter-action", this.t("ajouter_action"), b.actions.length, LIMITES.actions)}
       ${verif}
       ${this._carteRestaurer()}
       ${this._carteDelai()}`;
@@ -1235,7 +1245,7 @@ class ProtocoleAlarmePanel extends HTMLElement {
               <span class="noms"><span class="nom">${esc(this._nomEntite(id))}</span><span class="id">${esc(id)}</span></span>
               <button type="button" class="icone-btn" data-a="restaurer-retirer" data-i="${i}" aria-label="${this.t("retirer")}" title="${this.t("retirer")}"><ha-icon icon="mdi:close"></ha-icon></button></div>`).join("")}
           </div>
-          <button type="button" class="btn pointille" data-a="restaurer-ajouter"><ha-icon icon="mdi:plus"></ha-icon>${this.t("restaurer_ajouter")}</button>
+          ${this._boutonAjouter("restaurer-ajouter", this.t("restaurer_ajouter"), r.entites.length, LIMITES.restaurer)}
           <p class="sous">${this.t("restaurer_note")}</p>` : ""}
       </div>`;
   }
@@ -1616,6 +1626,8 @@ const STYLE = `
   .noms .type { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: 13px; color: var(--primary-text-color, #1c1c1e); }
   .tag-type { font-size: 12px; font-weight: 700; color: var(--bleu); background: color-mix(in srgb, var(--bleu) 10%, transparent); border-radius: 999px; padding: 2px 8px; }
   .noms .id { font-size: 12px; color: var(--gris); }
+  .btn:disabled, .chip:disabled { opacity: .45; cursor: not-allowed; }
+  .sous.limite { margin: 4px 0 0; color: var(--warning-color, #b26a00); }
   .liste-restaurer { display: flex; flex-direction: column; gap: 6px; }
   .ligne-restaurer { display: flex; align-items: center; gap: 10px; padding: 6px 4px 6px 8px; border: 1px solid var(--bord, #dde2e9); border-radius: 10px; }
   .ligne-restaurer .noms { flex: 1; min-width: 0; display: flex; flex-direction: column; }
