@@ -53,13 +53,18 @@ Protocole Alarme lance des actions quand vous **armez** ou **désarmez** votre a
 
 ### Installation
 
-#### Par HACS (dépôt personnalisé)
+#### Par HACS
 
 [![Ouvrir dans HACS](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=akoonet-homeassistant&repository=protocole_alarme&category=integration)
 
-1. Dans HACS, ajoutez `https://github.com/akoonet-homeassistant/protocole_alarme` comme dépôt personnalisé (catégorie *Intégration*), ou utilisez le bouton ci-dessus.
-2. Installez **Protocole Alarme**, puis redémarrez Home Assistant.
+1. Dans HACS, recherchez **Protocole Alarme**, ou utilisez le bouton ci-dessus.
+2. Installez-le, puis redémarrez Home Assistant.
 3. *Paramètres → Appareils et services → Ajouter une intégration* → **Protocole Alarme**, puis choisissez l'alarme à suivre.
+
+<details><summary>Si Protocole Alarme n'apparaît pas dans la recherche HACS</summary>
+
+Ajoutez `https://github.com/akoonet-homeassistant/protocole_alarme` comme **dépôt personnalisé** (HACS → ⋮ → *Dépôts personnalisés*, catégorie *Intégration*), puis reprenez à l'étape 2.
+</details>
 
 #### Manuelle
 
@@ -152,6 +157,7 @@ Ces services sont réservés aux administrateurs (et aux automatisations ou scri
 - Les actions lancées par un test sont rattachées à l'utilisateur qui l'a lancé, et celles lancées par l'alarme au changement d'état de l'alarme (journal de bord).
 - La carte lit l'état de l'alarme et les noms et résultats des règles exécutées (lecture seule, pour tout utilisateur connecté) ; armer et désarmer passent par les services de l'alarme, avec les droits de l'utilisateur. Le code n'est jamais enregistré.
 - La remise en état au désarmement n'accepte que des entités dont l'état peut être rejoué (lumières, interrupteurs, volets, thermostats…) et seulement l'état et quelques réglages utiles ; les **serrures sont exclues** pour ne jamais déverrouiller une porte automatiquement. La mémoire est relue et contrôlée au démarrage.
+- Tout ce qui vient des entités (noms, états, icônes) est échappé avant affichage dans le panneau ; une icône d'entité qui n'a pas la forme `prefixe:nom` est remplacée par l'icône par défaut.
 - Comme toute entité Home Assistant, l'interrupteur « Protocole actif », les interrupteurs de règle et les boutons « Tester » peuvent être utilisés par tous les utilisateurs et par les assistants vocaux exposés ; limitez leur exposition si nécessaire.
 
 ### Limites
@@ -209,13 +215,18 @@ Protocole Alarme runs actions when you **arm** or **disarm** your Home Assistant
 
 ### Installation
 
-#### Through HACS (custom repository)
+#### Through HACS
 
 [![Open in HACS](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=akoonet-homeassistant&repository=protocole_alarme&category=integration)
 
-1. In HACS, add `https://github.com/akoonet-homeassistant/protocole_alarme` as a custom repository (*Integration* category), or use the button above.
-2. Install **Protocole Alarme**, then restart Home Assistant.
+1. In HACS, search for **Protocole Alarme**, or use the button above.
+2. Install it, then restart Home Assistant.
 3. *Settings → Devices & services → Add integration* → **Protocole Alarme**, then choose the alarm to follow.
+
+<details><summary>If Protocole Alarme does not show up in the HACS search</summary>
+
+Add `https://github.com/akoonet-homeassistant/protocole_alarme` as a **custom repository** (HACS → ⋮ → *Custom repositories*, *Integration* category), then continue at step 2.
+</details>
 
 #### Manual
 
@@ -295,6 +306,7 @@ These services are reserved to administrators (and to Home Assistant automations
 - Actions started by a test are linked to the user who started it, and those started by the alarm to the alarm state change (logbook).
 - The card reads the alarm state and the names and results of rules that ran (read-only, for any logged-in user); arming and disarming go through the alarm services, with the user's rights. The code is never stored.
 - Restoring on disarming only accepts entities whose state can be replayed (lights, switches, covers, thermostats…) and only their state and a few useful settings; **locks are excluded** so a door is never unlocked automatically. The saved state is read back and checked at startup.
+- Everything that comes from entities (names, states, icons) is escaped before being shown in the panel; an entity icon that is not of the form `prefix:name` is replaced by the default icon.
 - Like any Home Assistant entity, the “Protocol enabled” switch, rule switches and “Test” buttons can be used by every user and by exposed voice assistants; limit their exposure if needed.
 
 ### Limitations
