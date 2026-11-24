@@ -66,6 +66,10 @@ const ICONE_EVENEMENT = { armement: "mdi:lock", desarmement: "mdi:lock-open-vari
 const esc = (v) =>
   String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 const CLE_STATUT = { absent: "non_installe", non_configure: "non_configure", pret: "pret" };
+// Une icône venant d'une entité (attribut icon) n'est utilisée que si elle a la forme « prefixe:nom » ;
+// sinon on prend l'icône par défaut. Elle est de toute façon échappée à l'affichage.
+const RE_ICONE = /^[a-z0-9_-]{1,32}:[a-z0-9_-]{1,64}$/i;
+const iconeSure = (v) => (typeof v === "string" && RE_ICONE.test(v) ? v : "");
 const domaineDe = (entityId) => String(entityId || "").split(".")[0];
 const copie = (o) => JSON.parse(JSON.stringify(o));
 
@@ -200,7 +204,7 @@ class ProtocoleAlarmePanel extends HTMLElement {
     return `<div class="chips">${services.map((s) => {
       const on = choisis.includes(s);
       const icone = on ? "mdi:check" : this._hass?.states?.[s] ? "mdi:send" : "";
-      return `<button type="button" class="chip ${on ? "on" : ""}" aria-pressed="${on}" data-a="${nomAction}" data-i="${i}"${L} data-v="${esc(s)}">${icone ? `<ha-icon icon="${icone}"></ha-icon>` : ""}${esc(this._nomService(s))}</button>`;
+      return `<button type="button" class="chip ${on ? "on" : ""}" aria-pressed="${on}" data-a="${nomAction}" data-i="${i}"${L} data-v="${esc(s)}">${icone ? `<ha-icon icon="${esc(icone)}"></ha-icon>` : ""}${esc(this._nomService(s))}</button>`;
     }).join("")}</div>`;
   }
   _libelleMode(m) { return MODES[this._langue][m] || m; }
@@ -215,11 +219,11 @@ class ProtocoleAlarmePanel extends HTMLElement {
   _detailParams(action) {
     const p = action.params || {};
     const morceaux = [];
-    if (action.action === "impulsion") morceaux.push(`${this._nombre(p.duree ?? 1)} s`);
-    if (p.position !== undefined && action.action === "position") morceaux.push(`${p.position} %`);
-    if (p.luminosite) morceaux.push(`${p.luminosite} %`);
+    if (action.action === "impulsion") morceaux.push(`${esc(this._nombre(p.duree ?? 1))} s`);
+    if (p.position !== undefined && action.action === "position") morceaux.push(`${esc(this._nombre(p.position))} %`);
+    if (p.luminosite) morceaux.push(`${esc(this._nombre(p.luminosite))} %`);
     if (p.preset) morceaux.push(esc(p.preset));
-    if (p.temperature !== undefined && action.action === "temperature") morceaux.push(`${this._nombre(p.temperature)} °`);
+    if (p.temperature !== undefined && action.action === "temperature") morceaux.push(`${esc(this._nombre(p.temperature))} °`);
     if (p.option) morceaux.push(esc(p.option));
     if (action.type === "notification" && p.critique) morceaux.push(esc(this.t("critique").toLowerCase()));
     return morceaux.length ? ` (${morceaux.join(", ")})` : "";
@@ -846,8 +850,8 @@ class ProtocoleAlarmePanel extends HTMLElement {
   _pastilleIcone(domaine, entityId) {
     const s = entityId ? this._hass?.states?.[entityId] : null;
     const classe = s?.attributes?.device_class;
-    const icone = s?.attributes?.icon || ICONES_CLASSE[classe] || ICONES[domaine] || "mdi:shape";
-    return `<span class="ic ${COULEURS[domaine] || "gris"}"><ha-icon icon="${icone}"></ha-icon></span>`;
+    const icone = iconeSure(s?.attributes?.icon) || ICONES_CLASSE[classe] || ICONES[domaine] || "mdi:shape";
+    return `<span class="ic ${esc(COULEURS[domaine] || "gris")}"><ha-icon icon="${esc(icone)}"></ha-icon></span>`;
   }
   _type(entityId) {
     const s = this._hass?.states?.[entityId];
@@ -978,7 +982,7 @@ class ProtocoleAlarmePanel extends HTMLElement {
     const b = this._brouillon;
     const option = (ev, icone, couleur, titre, desc) => `
       <button type="button" class="option grande ${b.evenement === ev ? "on" : ""}" aria-pressed="${b.evenement === ev}" data-a="moment" data-v="${ev}">
-        <span class="ic ${couleur}"><ha-icon icon="${icone}"></ha-icon></span>
+        <span class="ic ${esc(couleur)}"><ha-icon icon="${esc(icone)}"></ha-icon></span>
         <span class="nom">${this.t(titre)}</span><span class="sous">${this.t(desc)}</span>
         <span class="coche"></span>
       </button>`;
@@ -1076,7 +1080,7 @@ class ProtocoleAlarmePanel extends HTMLElement {
     const curseur = (nom, min, max, pas, valeur, libelle) => `
       <div class="reglage">
         <div class="ligne"><label for="p-${l}${i}-${nom}">${this.t(libelle)}</label><output id="val-${l}${i}-${nom}">${esc(this._valeurParam(nom, valeur))}</output></div>
-        <input id="p-${l}${i}-${nom}" type="range" min="${min}" max="${max}" step="${pas}" value="${valeur ?? min}" data-f="param" data-p="${nom}" data-i="${i}"${L}>
+        <input id="p-${l}${i}-${nom}" type="range" min="${min}" max="${max}" step="${pas}" value="${esc(valeur ?? min)}" data-f="param" data-p="${nom}" data-i="${i}"${L}>
       </div>`;
     const liste = (nom, options, libelle, vide) => `
       <label class="champ"><span>${this.t(libelle)}</span><select data-f="param-select" data-p="${nom}" data-i="${i}"${L}>
