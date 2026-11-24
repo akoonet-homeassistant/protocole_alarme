@@ -99,13 +99,15 @@ ACTIONS_SIMULATEUR = list(LS_INDEX_MODE)  # demarrer, auto, arreter
 PARAMETRES: dict[str, tuple[Any, str | None, bool]] = {
     "position": (vol.All(vol.Coerce(int), vol.Range(min=0, max=100)), "position", True),
     "luminosite": (vol.All(vol.Coerce(int), vol.Range(min=1, max=100)), "brightness_pct", False),
-    "preset": (vol.All(str, vol.Length(min=1)), "preset_mode", True),
+    "preset": (vol.All(str, vol.Length(min=1, max=100)), "preset_mode", True),
     "temperature": (vol.All(vol.Coerce(float), vol.Range(min=0, max=40)), "temperature", True),
-    "option": (vol.All(str, vol.Length(min=1)), "option", True),
+    "option": (vol.All(str, vol.Length(min=1, max=255)), "option", True),
     "duree": (vol.All(vol.Coerce(float), vol.Range(min=0.2, max=60)), None, True),
 }
 
 DUREE_IMPULSION_DEFAUT = 1.0
+CONDITIONS_MAX = 20  # conditions d'une règle
+DESTINATAIRES_MAX = 20  # destinataires d'une notification
 SEQUENCE_MAX = 100  # étapes d'un script avancé
 
 
@@ -227,8 +229,8 @@ SCHEMA_REGLE = vol.Schema(
         vol.Required("nom"): _texte(80),
         vol.Optional("actif", default=True): bool,
         vol.Required("evenement"): vol.In(EVENEMENTS),
-        vol.Optional("modes", default=list): [vol.In(ETATS_ARMES)],
-        vol.Optional("conditions", default=list): [SCHEMA_CONDITION],
+        vol.Optional("modes", default=list): vol.All([vol.In(ETATS_ARMES)], vol.Length(max=20)),
+        vol.Optional("conditions", default=list): vol.All([SCHEMA_CONDITION], vol.Length(max=CONDITIONS_MAX)),
         vol.Optional("actions", default=list): vol.All([dict], vol.Length(max=50)),
         vol.Optional("delai_s", default=0): _secondes(3600),
         vol.Optional("surveiller", default=False): bool,
@@ -259,6 +261,8 @@ def services_notification(*sources: Any) -> list[str]:
         for valeur in source if isinstance(source, list) else [source]:
             if valeur and valeur not in services:
                 services.append(_service_notification(valeur))
+    if len(services) > DESTINATAIRES_MAX:
+        raise vol.Invalid("notification_invalide")
     return services
 
 
