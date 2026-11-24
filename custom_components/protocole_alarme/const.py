@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 DOMAIN = "protocole_alarme"
-VERSION = "2026.11.12"
+VERSION = "2026.11.13"
 NOM_APPAREIL = "Protocole Alarme"
 
 PANEL_URL = "protocole-alarme"
