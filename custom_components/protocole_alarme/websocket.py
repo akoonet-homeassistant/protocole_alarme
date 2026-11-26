@@ -261,6 +261,10 @@ async def ws_vider_journal(hass, connection, msg, moteur: Moteur) -> None:
     connection.send_result(msg["id"], {})
 
 
+def _vers_texte_yaml(sequence: list) -> str:
+    return yaml.safe_dump(sequence, allow_unicode=True, sort_keys=False, default_flow_style=False)
+
+
 @websocket_api.websocket_command({vol.Required("type"): f"{DOMAIN}/vers_yaml", vol.Required("regle"): dict})
 @websocket_api.require_admin
 @websocket_api.async_response
@@ -272,7 +276,8 @@ async def ws_vers_yaml(hass, connection, msg, moteur: Moteur) -> None:
     except (vol.Invalid, R.ErreurRegle) as err:
         _erreur(connection, msg, err)
         return
-    texte = yaml.safe_dump(sequence, allow_unicode=True, sort_keys=False, default_flow_style=False)
+    # Conversion YAML hors de la boucle d'événements (un long script ne doit pas la bloquer)
+    texte = await hass.async_add_executor_job(_vers_texte_yaml, sequence)
     connection.send_result(msg["id"], {"yaml": texte})
 
 
@@ -285,7 +290,7 @@ async def ws_vers_yaml(hass, connection, msg, moteur: Moteur) -> None:
 async def ws_depuis_yaml(hass, connection, msg, moteur: Moteur) -> None:
     """Lit et vérifie le YAML saisi en mode avancé."""
     try:
-        sequence = yaml.safe_load(msg["yaml"]) or []
+        sequence = await hass.async_add_executor_job(yaml.safe_load, msg["yaml"]) or []
     except yaml.YAMLError as err:
         connection.send_error(msg["id"], "yaml_invalide", str(err))
         return

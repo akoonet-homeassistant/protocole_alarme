@@ -6,7 +6,7 @@
 
 [![Release](https://img.shields.io/github/v/release/akoonet-homeassistant/protocole_alarme)](https://github.com/akoonet-homeassistant/protocole_alarme/releases)
 [![License](https://img.shields.io/github/license/akoonet-homeassistant/protocole_alarme)](LICENSE)
-[![HACS](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://hacs.xyz)
+[![HACS](https://img.shields.io/badge/HACS-Default-41BDF5.svg)](https://hacs.xyz)
 
 ![Protocole Alarme](docs/screenshots/regles.png)
 
