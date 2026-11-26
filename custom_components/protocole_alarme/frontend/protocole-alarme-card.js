@@ -14,7 +14,7 @@ const TEXTES = {
       disarming: "Désarmement…", triggered: "Alarme déclenchée !", unavailable: "Indisponible", unknown: "Inconnu" },
     modes: { armed_away: "Absent", armed_night: "Nuit", armed_home: "Présent", armed_vacation: "Vacances", armed_custom_bypass: "Personnalisé" },
     ed: { entity: "Alarme", nom: "Titre", modes: "Modes affichés", capteurs: "Capteurs à afficher (dans cet ordre)",
-      ajouter_capteur: "Ajouter un capteur", monter: "Monter", descendre: "Descendre", retirer: "Retirer", aucun_capteur: "Aucun capteur.",
+      ajouter_capteur: "Ajouter un capteur", deplacer: "Glisser pour déplacer (ou flèches haut / bas)", deplace: "{nom} : position {n} sur {total}", retirer: "Retirer", aucun_capteur: "Aucun capteur.",
       afficher_regles: "Afficher les règles exécutées", afficher_capteurs: "Afficher les capteurs", affichage_capteurs: "Affichage des capteurs",
       afficher_panneau: "Afficher le bouton « Règles » (alarme désarmée)" },
     styles: { pastilles: "Pastilles", lignes: "Liste sur deux colonnes", resume: "Résumé (capteurs ouverts seulement)" },
@@ -33,7 +33,7 @@ const TEXTES = {
       disarming: "Disarming…", triggered: "Alarm triggered!", unavailable: "Unavailable", unknown: "Unknown" },
     modes: { armed_away: "Away", armed_night: "Night", armed_home: "Home", armed_vacation: "Vacation", armed_custom_bypass: "Custom" },
     ed: { entity: "Alarm", nom: "Title", modes: "Modes shown", capteurs: "Sensors to show (in this order)",
-      ajouter_capteur: "Add a sensor", monter: "Move up", descendre: "Move down", retirer: "Remove", aucun_capteur: "No sensor.",
+      ajouter_capteur: "Add a sensor", deplacer: "Drag to move (or up / down arrow keys)", deplace: "{nom}: position {n} of {total}", retirer: "Remove", aucun_capteur: "No sensor.",
       afficher_regles: "Show rules that ran", afficher_capteurs: "Show sensors", affichage_capteurs: "Sensor display",
       afficher_panneau: "Show the “Rules” button (alarm disarmed)" },
     styles: { pastilles: "Chips", lignes: "Two-column list", resume: "Summary (open sensors only)" },
@@ -307,7 +307,8 @@ class ProtocoleAlarmeCardEditor extends HTMLElement {
   setConfig(config) { this._config = config; this._rendu(); }
   set hass(hass) {
     this._hass = hass;
-    if (this._form) { this._form.hass = hass; this._ajout.hass = hass; this._liste(); } else this._rendu();
+    // Pas de redessin pendant un glisser-déposer : il interromprait le geste
+    if (this._form) { this._form.hass = hass; this._ajout.hass = hass; if (!this._glisse) this._liste(); } else this._rendu();
   }
 
   _changer(config) {
@@ -322,7 +323,7 @@ class ProtocoleAlarmeCardEditor extends HTMLElement {
       this._form = document.createElement("ha-form");
       this._form.computeLabel = (s) => T.ed[s.name] || s.name;
       this._form.addEventListener("value-changed", (e) => this._changer({ ...e.detail.value, capteurs: this._config.capteurs || [] }));
-      // Capteurs : liste ordonnée (monter / descendre / retirer) + sélecteur pour en ajouter
+      // Capteurs : liste ordonnée par glisser-déposer (poignée, souris ou doigt ; flèches au clavier) + sélecteur pour en ajouter
       this._bloc = document.createElement("div");
       this._bloc.className = "pa-capteurs";
       this._ajout = document.createElement("ha-form");
@@ -337,7 +338,14 @@ class ProtocoleAlarmeCardEditor extends HTMLElement {
       });
       const style = document.createElement("style");
       style.textContent = `.pa-capteurs { margin: 16px 0 8px; } .pa-titre { font-weight: 500; margin-bottom: 6px; }
-        .pa-ligne { display: flex; align-items: center; gap: 4px; padding: 4px 0; border-bottom: 1px solid var(--divider-color, #e0e0e0); }
+        .pa-ligne { display: flex; align-items: center; gap: 4px; padding: 4px 0; border-bottom: 1px solid var(--divider-color, #e0e0e0);
+          background: var(--card-background-color, var(--primary-background-color, #fff)); position: relative; }
+        .pa-ligne.pa-glisse { z-index: 2; box-shadow: 0 4px 14px rgba(0,0,0,.18); border-radius: 8px; opacity: .95; }
+        .pa-poignee { width: 36px; height: 36px; flex: none; display: inline-flex; align-items: center; justify-content: center; border-radius: 50%;
+          cursor: grab; touch-action: none; color: var(--secondary-text-color); outline: none; }
+        .pa-poignee:hover, .pa-poignee:focus-visible { background: var(--secondary-background-color, #f5f5f5); color: var(--primary-text-color); }
+        .pa-glisse .pa-poignee { cursor: grabbing; }
+        .pa-annonce { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
         .pa-nom { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .pa-nom small { display: block; color: var(--secondary-text-color); }
         .pa-ligne button { width: 36px; height: 36px; border: 0; border-radius: 50%; background: none; color: inherit; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
@@ -369,23 +377,86 @@ class ProtocoleAlarmeCardEditor extends HTMLElement {
     this._bloc.innerHTML = `<div class="pa-titre">${esc(T.ed.capteurs)}</div>
       ${liste.length ? liste.map((e, k) => {
         const s = this._hass.states[e];
-        return `<div class="pa-ligne"><span class="pa-nom">${esc(s?.attributes?.friendly_name || e)}<small>${esc(e)}</small></span>
-          <button data-a="haut" data-k="${k}" ${k === 0 ? "disabled" : ""} aria-label="${esc(T.ed.monter)}"><ha-icon icon="mdi:arrow-up"></ha-icon></button>
-          <button data-a="bas" data-k="${k}" ${k === liste.length - 1 ? "disabled" : ""} aria-label="${esc(T.ed.descendre)}"><ha-icon icon="mdi:arrow-down"></ha-icon></button>
+        return `<div class="pa-ligne" data-e="${esc(e)}">
+          <span class="pa-poignee" role="button" tabindex="0" data-k="${k}" title="${esc(T.ed.deplacer)}" aria-label="${esc(T.ed.deplacer)}"><ha-icon icon="mdi:drag"></ha-icon></span>
+          <span class="pa-nom">${esc(s?.attributes?.friendly_name || e)}<small>${esc(e)}</small></span>
           <button data-a="retirer" data-k="${k}" aria-label="${esc(T.ed.retirer)}"><ha-icon icon="mdi:close"></ha-icon></button></div>`;
-      }).join("") : `<div class="pa-vide">${esc(T.ed.aucun_capteur)}</div>`}`;
+      }).join("") : `<div class="pa-vide">${esc(T.ed.aucun_capteur)}</div>`}
+      <div class="pa-annonce" aria-live="polite"></div>`;
     this._bloc.appendChild(this._ajout);
     this._bloc.querySelectorAll("button[data-a]").forEach((b) => b.addEventListener("click", () => {
       const l = [...(this._config.capteurs || [])];
-      const k = Number(b.dataset.k);
-      if (b.dataset.a === "retirer") l.splice(k, 1);
-      else {
-        const j = b.dataset.a === "haut" ? k - 1 : k + 1;
-        [l[k], l[j]] = [l[j], l[k]];
-      }
+      l.splice(Number(b.dataset.k), 1);
       this._changer({ ...this._config, capteurs: l });
       this._liste();
     }));
+    this._bloc.querySelectorAll(".pa-poignee").forEach((p) => {
+      p.addEventListener("pointerdown", (ev) => this._debutGlisse(ev, p));
+      p.addEventListener("keydown", (ev) => {
+        if (ev.key !== "ArrowUp" && ev.key !== "ArrowDown") return;
+        ev.preventDefault();
+        const k = Number(p.dataset.k);
+        const j = ev.key === "ArrowUp" ? k - 1 : k + 1;
+        if (j < 0 || j >= liste.length) return;
+        this._deplacer(k, j, true);
+      });
+    });
+  }
+
+  // Déplace le capteur k à la position j et enregistre ; garde le focus sur sa poignée au clavier
+  _deplacer(k, j, focus) {
+    const l = [...(this._config.capteurs || [])];
+    const [e] = l.splice(k, 1);
+    l.splice(j, 0, e);
+    this._changer({ ...this._config, capteurs: l });
+    this._liste();
+    const T = TEXTES[langue(this._hass)];
+    const nom = this._hass.states[e]?.attributes?.friendly_name || e;
+    const annonce = this._bloc.querySelector(".pa-annonce");
+    if (annonce) annonce.textContent = T.ed.deplace.replace("{nom}", nom).replace("{n}", j + 1).replace("{total}", l.length);
+    if (focus) this._bloc.querySelectorAll(".pa-poignee")[j]?.focus();
+  }
+
+  // Glisser-déposer par la poignée (Pointer Events : souris, doigt, stylet)
+  _debutGlisse(ev, poignee) {
+    if (ev.button !== undefined && ev.button !== 0) return;
+    ev.preventDefault();
+    const ligne = poignee.closest(".pa-ligne");
+    const lignes = [...this._bloc.querySelectorAll(".pa-ligne")];
+    const depart = lignes.indexOf(ligne);
+    if (depart < 0 || lignes.length < 2) return;
+    poignee.setPointerCapture(ev.pointerId);
+    this._glisse = true;
+    ligne.classList.add("pa-glisse");
+    let y0 = ev.clientY;
+    const bouger = (e) => {
+      ligne.style.transform = `translateY(${e.clientY - y0}px)`;
+      // Échange avec la voisine dès que le pointeur dépasse son milieu
+      const prec = ligne.previousElementSibling?.classList.contains("pa-ligne") ? ligne.previousElementSibling : null;
+      const suiv = ligne.nextElementSibling?.classList.contains("pa-ligne") ? ligne.nextElementSibling : null;
+      if (suiv) {
+        const r = suiv.getBoundingClientRect();
+        if (e.clientY > r.top + r.height / 2) { suiv.after(ligne); y0 += r.height; ligne.style.transform = `translateY(${e.clientY - y0}px)`; return; }
+      }
+      if (prec) {
+        const r = prec.getBoundingClientRect();
+        if (e.clientY < r.top + r.height / 2) { prec.before(ligne); y0 -= r.height; ligne.style.transform = `translateY(${e.clientY - y0}px)`; }
+      }
+    };
+    const finir = () => {
+      poignee.removeEventListener("pointermove", bouger);
+      poignee.removeEventListener("pointerup", finir);
+      poignee.removeEventListener("pointercancel", finir);
+      this._glisse = false;
+      ligne.classList.remove("pa-glisse");
+      ligne.style.transform = "";
+      const arrivee = [...this._bloc.querySelectorAll(".pa-ligne")].indexOf(ligne);
+      if (arrivee !== depart) this._deplacer(depart, arrivee, false);
+      else this._liste();
+    };
+    poignee.addEventListener("pointermove", bouger);
+    poignee.addEventListener("pointerup", finir);
+    poignee.addEventListener("pointercancel", finir);
   }
 }
 

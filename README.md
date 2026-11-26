@@ -105,7 +105,7 @@ affichage_capteurs: pastilles                # pastilles | lignes (deux colonnes
 afficher_panneau: true                       # bouton « Règles » vers le panneau (alarme désarmée)
 ```
 
-Bouclier : vert (désarmée), rouge (armée), orange (armement, attente), rouge clignotant (alarme déclenchée), gris (indisponible). Les règles affichées sont celles qui ont réellement agi depuis le dernier armement ou désarmement, avec le résultat de leur vérification. Dans l'éditeur, les capteurs se trient avec les flèches (monter / descendre) et se retirent avec la croix. Un appui sur le titre d'une liste la replie ; un appui sur un capteur ouvre sa fiche. Le bouton **Règles** ouvre le panneau Protocole Alarme ; il n'apparaît que lorsque l'alarme est désarmée.
+Bouclier : vert (désarmée), rouge (armée), orange (armement, attente), rouge clignotant (alarme déclenchée), gris (indisponible). Les règles affichées sont celles qui ont réellement agi depuis le dernier armement ou désarmement, avec le résultat de leur vérification. Dans l'éditeur, les capteurs se trient par glisser-déposer avec la poignée ⠿ (à la souris ou au doigt ; au clavier, flèches haut / bas sur la poignée) et se retirent avec la croix. Un appui sur le titre d'une liste la replie ; un appui sur un capteur ouvre sa fiche. Le bouton **Règles** ouvre le panneau Protocole Alarme ; il n'apparaît que lorsque l'alarme est désarmée.
 
 ### Captures d'écran
 
@@ -267,7 +267,7 @@ affichage_capteurs: pastilles             # pastilles (chips) | lignes (two colu
 afficher_panneau: true                    # “Rules” button to the panel (alarm disarmed)
 ```
 
-Shield: green (disarmed), red (armed), orange (arming, pending), blinking red (alarm triggered), grey (unavailable). The rules shown are the ones that actually acted since the last arming or disarming, with their check result. In the editor, sensors are sorted with the arrows (up / down) and removed with the cross. Tap a list title to collapse it; tap a sensor to open its details. The **Rules** button opens the Protocole Alarme panel; it only shows while the alarm is disarmed.
+Shield: green (disarmed), red (armed), orange (arming, pending), blinking red (alarm triggered), grey (unavailable). The rules shown are the ones that actually acted since the last arming or disarming, with their check result. In the editor, sensors are sorted by drag and drop with the ⠿ handle (mouse or finger; with the keyboard, up / down arrows on the handle) and removed with the cross. Tap a list title to collapse it; tap a sensor to open its details. The **Rules** button opens the Protocole Alarme panel; it only shows while the alarm is disarmed.
 
 ### Screenshots
 
